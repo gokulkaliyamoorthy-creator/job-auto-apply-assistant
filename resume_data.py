@@ -20,8 +20,8 @@ RESUME = {
     "notice_period_days": "60",
     "current_ctc": "30",
     "current_ctc_lpa": "30 LPA",
-    "fixed_ctc": "28.7 LPA",
-    "variable_ctc": "1.3 LPA",
+    "fixed_ctc": "28.7",
+    "variable_ctc": "1.3",
     "expected_ctc": "40",
     "expected_ctc_lpa": "40 LPA",
     "gender": "Male",
@@ -51,64 +51,85 @@ RESUME = {
     ),
 }
 
-# Ordered mapping: first match wins
+# ══════════════════════════════════════════════════════════════════════
+#  ORDER MATTERS — first match wins. CTC/salary BEFORE experience
+#  so "CTC" never returns "9"
+# ══════════════════════════════════════════════════════════════════════
 _QA_MAP = [
-    # Name
-    (["full name", "your name", "candidate name", "applicant name"], RESUME["name"]),
-    # Contact
-    (["email", "e-mail", "mail id", "email id", "email address"], RESUME["email"]),
-    (["phone", "mobile", "contact number", "cell", "telephone"], RESUME["phone_alt"]),
-    # Location
-    (["preferred location", "location preference", "preferred city"], RESUME["preferred_locations"]),
-    (["current location", "current city", "city you live", "residing"], RESUME["current_city"]),
-    (["hometown", "native", "permanent address"], RESUME["location"]),
-    (["relocat"], "Yes"),
-    # Experience
-    (["relevant experience", "ai experience", "ml experience", "genai experience",
-      "generative ai experience", "related experience"], RESUME["relevant_experience"]),
-    (["total experience", "years of experience", "total years", "overall experience",
-      "how many year", "work experience", "professional experience", "experience in year"], RESUME["total_experience"]),
-    # CTC
+    # ── CTC / Salary (MUST be before experience) ──
     (["expected ctc", "expected salary", "expected annual", "expected compensation",
-      "desired salary", "desired ctc", "expectation"], RESUME["expected_ctc"]),
-    (["fixed", "base salary", "fixed ctc", "fixed component"], RESUME["fixed_ctc"]),
-    (["variable", "bonus", "variable ctc", "variable component"], RESUME["variable_ctc"]),
+      "desired salary", "desired ctc", "expectation", "expected package"], RESUME["expected_ctc"]),
     (["current ctc", "current salary", "current annual", "present salary",
-      "present ctc", "last drawn", "ctc"], RESUME["current_ctc"]),
-    # Notice
+      "present ctc", "last drawn", "annual ctc", "yearly salary",
+      "current package", "present package"], RESUME["current_ctc"]),
+    (["fixed ctc", "fixed salary", "fixed component", "base salary", "base ctc"], RESUME["fixed_ctc"]),
+    (["variable ctc", "variable salary", "variable component", "bonus", "incentive"], RESUME["variable_ctc"]),
+    # Catch-all for any CTC/salary/package/lpa/lakhs question
+    (["ctc", "salary", "compensation", "package", "lpa", "lakhs", "lakh",
+      "annual income", "remuneration", "pay", "stipend"], RESUME["current_ctc"]),
+
+    # ── Notice period ──
     (["notice period", "notice", "joining time", "when can you join", "earliest joining",
-      "availability", "how soon"], RESUME["notice_period"]),
-    # Company / Role
+      "how soon can you join", "availability to join", "joining date"], RESUME["notice_period"]),
+
+    # ── Name ──
+    (["full name", "your name", "candidate name", "applicant name"], RESUME["name"]),
+
+    # ── Contact ──
+    (["email", "e-mail", "mail id", "email id", "email address"], RESUME["email"]),
+    (["phone", "mobile", "contact number", "cell", "telephone", "whatsapp"], RESUME["phone_alt"]),
+
+    # ── Location ──
+    (["preferred location", "location preference", "preferred city"], RESUME["preferred_locations"]),
+    (["current location", "current city", "city you live", "residing", "based in"], RESUME["current_city"]),
+    (["hometown", "native", "permanent address", "home town"], RESUME["location"]),
+    (["relocat"], "Yes"),
+
+    # ── Experience (AFTER CTC so salary questions don't land here) ──
+    (["relevant experience", "ai experience", "ml experience", "genai experience",
+      "generative ai experience", "related experience", "experience in ai",
+      "experience in ml", "experience in gen", "experience in deep",
+      "experience in nlp", "experience in machine"], RESUME["relevant_experience"]),
+    (["total experience", "years of experience", "total years", "overall experience",
+      "how many year", "work experience", "professional experience", "experience in year",
+      "total work", "it experience"], RESUME["total_experience"]),
+
+    # ── Company / Role ──
     (["current company", "present company", "current employer", "current organization",
-      "company name", "employer"], RESUME["current_company"]),
+      "company name", "employer", "organisation"], RESUME["current_company"]),
     (["current designation", "current role", "current title", "job title",
-      "current position", "designation"], RESUME["current_designation"]),
-    # Education
+      "current position", "designation", "role"], RESUME["current_designation"]),
+
+    # ── Education ──
     (["education", "qualification", "degree", "highest qualification"], RESUME["education"]),
     (["college", "university", "institute", "school"], RESUME["college"]),
-    (["graduation year", "year of passing", "passout", "batch"], RESUME["graduation_year"]),
-    # Personal
+    (["graduation year", "year of passing", "passout", "batch", "passing year"], RESUME["graduation_year"]),
+
+    # ── Personal ──
     (["gender", "sex"], RESUME["gender"]),
     (["marital", "married"], RESUME["marital_status"]),
     (["language", "languages known"], RESUME["languages"]),
     (["linkedin"], RESUME["linkedin"]),
-    # Skills
-    (["skill", "technologies", "tech stack", "tools", "proficien"], ", ".join(RESUME["skills"])),
-    # Summary / About
+
+    # ── Skills ──
+    (["skill", "technologies", "tech stack", "tools", "proficien", "expertise"], ", ".join(RESUME["skills"])),
+
+    # ── Summary / About ──
     (["about yourself", "summary", "describe yourself", "profile summary",
-      "tell us about", "cover letter", "why should we", "introduction"], RESUME["summary"]),
+      "tell us about", "cover letter", "why should we", "introduction",
+      "about you", "brief about"], RESUME["summary"]),
 ]
 
-# Yes/No keyword intelligence
 _YES_KEYWORDS = [
     "willing", "ready", "open to", "comfortable", "agree", "consent",
     "authorize", "confirm", "accept", "relocat", "shift", "travel",
     "work from office", "wfo", "hybrid", "onsite", "night shift",
-    "rotational", "weekend", "immediate", "flexible",
+    "rotational", "weekend", "immediate", "flexible", "ok with",
+    "fine with", "available for", "interested",
 ]
 _NO_KEYWORDS = [
     "disability", "handicap", "differently abled", "criminal", "backlog",
-    "bond", "arrear",
+    "bond", "arrear", "gap in education", "gap in career",
 ]
 
 
@@ -117,12 +138,12 @@ def answer_question(question):
         return RESUME["total_experience"]
     q = question.lower().strip()
 
-    # Direct mapping match
+    # ── 1. Direct mapping match (order matters!) ──
     for keywords, value in _QA_MAP:
         if any(k in q for k in keywords):
             return value
 
-    # Yes/No intelligence
+    # ── 2. Yes/No intelligence ──
     for k in _YES_KEYWORDS:
         if k in q:
             return "Yes"
@@ -130,16 +151,28 @@ def answer_question(question):
         if k in q:
             return "No"
 
-    # Numeric question heuristics
-    if any(w in q for w in ["how many", "number of", "count", "years", "months"]):
-        if any(w in q for w in ["ai", "ml", "genai", "generative", "deep learning", "nlp"]):
-            return RESUME["relevant_experience"]
-        return RESUME["total_experience"]
-
-    if any(w in q for w in ["salary", "ctc", "compensation", "package", "lpa", "lakhs"]):
-        if any(w in q for w in ["expect", "desired"]):
+    # ── 3. Smart fallback for numeric questions ──
+    # CTC/salary related — return 30 (current) not 9
+    if any(w in q for w in ["salary", "ctc", "compensation", "package", "lpa",
+                             "lakhs", "lakh", "annual", "pay", "remuneration"]):
+        if any(w in q for w in ["expect", "desired", "looking for"]):
             return RESUME["expected_ctc"]
         return RESUME["current_ctc"]
 
-    # Fallback: return experience as safe numeric default
+    # Experience related
+    if any(w in q for w in ["how many", "number of", "count", "years", "months", "experience"]):
+        if any(w in q for w in ["ai", "ml", "genai", "generative", "deep learning",
+                                 "nlp", "machine learning", "data science"]):
+            return RESUME["relevant_experience"]
+        return RESUME["total_experience"]
+
+    # Notice related
+    if any(w in q for w in ["notice", "join", "available", "start"]):
+        return RESUME["notice_period"]
+
+    # Location related
+    if any(w in q for w in ["location", "city", "place", "where"]):
+        return RESUME["current_city"]
+
+    # ── 4. Final fallback ──
     return RESUME["total_experience"]

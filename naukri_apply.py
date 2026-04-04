@@ -5,7 +5,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import Select
 from selenium.common.exceptions import *
 from browser_utils import create_driver, wait_and_click, wait_for
-from resume_data import answer_question, RESUME
+from resume_data import answer_question, RESUME, is_relevant_job
 
 log = logging.getLogger(__name__)
 
@@ -198,6 +198,10 @@ class NaukriApplier:
                 self.skipped += 1
                 return
             if "applied" in btn.text.strip().lower():
+                self.skipped += 1
+                return
+            if not is_relevant_job(title):
+                log.info(f"Skipped (not AI/ML): {title}")
                 self.skipped += 1
                 return
             self._click(btn)

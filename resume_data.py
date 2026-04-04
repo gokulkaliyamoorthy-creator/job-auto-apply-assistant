@@ -176,3 +176,28 @@ def answer_question(question):
 
     # ── 4. Final fallback ──
     return RESUME["total_experience"]
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  JOB TITLE RELEVANCE FILTER — only apply to AI/ML related roles
+# ══════════════════════════════════════════════════════════════════════
+_RELEVANT_KEYWORDS = [
+    "ai", "artificial intelligence", "machine learning", "ml",
+    "deep learning", "generative ai", "genai", "gen ai",
+    "llm", "large language model", "nlp", "natural language",
+    "rag", "retrieval augmented", "computer vision", "cv engineer",
+    "data scientist", "data science", "ml engineer", "ai engineer",
+    "ai architect", "ml architect", "ai/ml", "ml/ai",
+    "prompt engineer", "ai developer", "ml developer",
+    "ai specialist", "ml specialist", "ai consultant",
+    "neural network", "tensorflow", "pytorch", "langchain",
+    "chatbot", "conversational ai", "speech to text", "stt",
+    "ai ops", "mlops", "ml ops",
+]
+
+
+def is_relevant_job(title):
+    if not title:
+        return False
+    t = title.lower()
+    return any(k in t for k in _RELEVANT_KEYWORDS)

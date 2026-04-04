@@ -3,20 +3,14 @@ import logging
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import Select
-from selenium.common.exceptions import (
-    NoSuchElementException,
-    TimeoutException,
-    ElementClickInterceptedException,
-    StaleElementReferenceException,
-    ElementNotInteractableException,
-)
-from browser_utils import create_driver, wait_and_click, wait_for, slow_type
+from selenium.common.exceptions import *
+from browser_utils import create_driver, wait_and_click, wait_for
 from resume_data import answer_question, RESUME
 
 log = logging.getLogger(__name__)
 
 
-def _safe(fn):
+def safe(fn):
     try:
         return fn()
     except Exception:
@@ -37,22 +31,51 @@ class NaukriApplier:
         self.failed = 0
         self.driver = None
 
+    def _js(self, script, *args):
+        return self.driver.execute_script(script, *args)
+
+    def _scroll(self, el):
+        self._js("arguments[0].scrollIntoView({block:'center',behavior:'instant'});", el)
+
+    def _click(self, el):
+        self._scroll(el)
+        self._js("arguments[0].click();", el)
+
+    def _els(self, css):
+        return self.driver.find_elements(By.CSS_SELECTOR, css)
+
+    def _el(self, css):
+        return self.driver.find_element(By.CSS_SELECTOR, css)
+
+    def _xel(self, xpath):
+        return self.driver.find_element(By.XPATH, xpath)
+
     def run(self):
         self.driver = create_driver()
         try:
             self._login()
-            for kw in self.keywords:
-                for loc in self.locations:
-                    if self.applied >= self.max_apps:
-                        return
-                    log.info(f"Search: '{kw}' in '{loc}'")
-                    self._search_and_apply(kw, loc)
+            # Never stop — keep cycling through keywords/locations forever
+            while True:
+                for kw in self.keywords:
+                    for loc in self.locations:
+                        try:
+                            log.info(f"Search: '{kw}' in '{loc}'")
+                            self._search_and_apply(kw, loc)
+                        except Exception as e:
+                            log.error(f"Search error: {e}")
+                            continue
+        except KeyboardInterrupt:
+            log.info("Stopped by user")
         except Exception as e:
-            log.error(f"Fatal: {e}", exc_info=True)
+            log.error(f"Fatal: {e}")
         finally:
             log.info(f"Done — Applied:{self.applied} Skipped:{self.skipped} Failed:{self.failed}")
-            self.driver.quit()
+            try:
+                self.driver.quit()
+            except Exception:
+                pass
 
+    # ── LOGIN ──────────────────────────────────────────────────────────────
     def _login(self):
         d = self.driver
         d.get(self.BASE)
@@ -81,7 +104,7 @@ class NaukriApplier:
                             try:
                                 d.find_element(By.XPATH, a).click()
                                 break
-                            except NoSuchElementException:
+                            except Exception:
                                 continue
                         time.sleep(2)
                         try:
@@ -93,7 +116,7 @@ class NaukriApplier:
                         log.info("Google login OK")
                         return
                     break
-            except (NoSuchElementException, ElementClickInterceptedException):
+            except Exception:
                 continue
         try:
             wait_for(d, By.ID, "usernameField", timeout=5).send_keys(self.email)
@@ -109,48 +132,64 @@ class NaukriApplier:
         for s in ["div.nI-gNb-drawer__hamburger", "a[href*='mnjuser']",
                    "span.nI-gNb-header__userName", "img.nI-gNb-header__userImg"]:
             try:
-                if self.driver.find_element(By.CSS_SELECTOR, s).is_displayed():
+                if self._el(s).is_displayed():
                     return True
-            except (NoSuchElementException, StaleElementReferenceException):
+            except Exception:
                 pass
         u = self.driver.current_url
         return "nlogin" not in u and "login" not in u
 
+    # ── SEARCH ─────────────────────────────────────────────────────────────
     def _search_and_apply(self, keywords, location):
         kw, loc = keywords.replace(" ", "-"), location.lower().replace(" ", "-")
         page = 1
-        while self.applied < self.max_apps:
-            self.driver.get(f"{self.BASE}/{kw}-jobs-in-{loc}?k={keywords}&l={location}&sortBy=date&pageNo={page}")
-            time.sleep(1.5)
-            jobs = []
-            for s in ["div.srp-jobtuple-wrapper a.title", "article.jobTuple a.title",
-                       "div.cust-job-tuple a.title", "a.title"]:
-                els = self.driver.find_elements(By.CSS_SELECTOR, s)
-                if els:
-                    for e in els:
-                        try:
-                            h, t = e.get_attribute("href"), e.text.strip()
-                            if h and t:
-                                jobs.append((h, t))
-                        except StaleElementReferenceException:
-                            pass
+        while True:
+            try:
+                self.driver.get(f"{self.BASE}/{kw}-jobs-in-{loc}?k={keywords}&l={location}&sortBy=date&pageNo={page}")
+                time.sleep(1.2)
+                jobs = []
+                for s in ["div.srp-jobtuple-wrapper a.title", "article.jobTuple a.title",
+                           "div.cust-job-tuple a.title", "a.title"]:
+                    els = self._els(s)
+                    if els:
+                        for e in els:
+                            try:
+                                h, t = e.get_attribute("href"), e.text.strip()
+                                if h and t:
+                                    jobs.append((h, t))
+                            except Exception:
+                                pass
+                        break
+                if not jobs:
+                    log.info(f"No jobs page {page}")
                     break
-            if not jobs:
-                log.info(f"No jobs page {page}")
-                break
-            log.info(f"Page {page}: {len(jobs)} jobs")
-            for h, t in jobs:
-                if self.applied >= self.max_apps:
-                    return
-                self._apply_to_job(h, t)
-            page += 1
+                log.info(f"Page {page}: {len(jobs)} jobs")
+                for h, t in jobs:
+                    try:
+                        self._apply_to_job(h, t)
+                    except Exception as e:
+                        log.warning(f"Error on '{t}': {e}")
+                        self.failed += 1
+                        # Make sure we're back on main window
+                        try:
+                            if len(self.driver.window_handles) > 1:
+                                self.driver.close()
+                                self.driver.switch_to.window(self.driver.window_handles[0])
+                        except Exception:
+                            pass
+                page += 1
+            except Exception as e:
+                log.error(f"Page {page} error: {e}")
+                page += 1
+                continue
 
+    # ── APPLY ──────────────────────────────────────────────────────────────
     def _apply_to_job(self, url, title):
         d = self.driver
         mw = d.current_window_handle
         d.execute_script("window.open(arguments[0]);", url)
         d.switch_to.window(d.window_handles[-1])
-        time.sleep(0.5)
+        time.sleep(0.4)
         try:
             btn = self._find_apply_btn()
             if not btn:
@@ -159,17 +198,26 @@ class NaukriApplier:
             if "applied" in btn.text.strip().lower():
                 self.skipped += 1
                 return
-            btn.click()
-            time.sleep(0.5)
+            self._click(btn)
+            time.sleep(0.3)
             self._handle_all_popups()
             self.applied += 1
-            log.info(f"[{self.applied}/{self.max_apps}] Applied: {title}")
+            log.info(f"[{self.applied}] Applied: {title}")
         except Exception as e:
             log.warning(f"Failed '{title}': {e}")
             self.failed += 1
         finally:
-            d.close()
-            d.switch_to.window(mw)
+            try:
+                d.close()
+            except Exception:
+                pass
+            try:
+                d.switch_to.window(mw)
+            except Exception:
+                try:
+                    d.switch_to.window(d.window_handles[0])
+                except Exception:
+                    pass
 
     def _find_apply_btn(self):
         for s in ["//button[contains(translate(.,'APLY','aply'),'apply') and not(contains(translate(.,'APLIED','aplied'),'applied'))]",
@@ -178,146 +226,150 @@ class NaukriApplier:
                 b = self.driver.find_element(By.XPATH, s)
                 if b.is_displayed():
                     return b
-            except NoSuchElementException:
+            except Exception:
                 pass
         return None
 
     # ══════════════════════════════════════════════════════════════════════
-    #  POPUP / CHATBOT / FORM HANDLER — fills EVERYTHING fast
+    #  POPUP HANDLER — chatbot + form, never stops
     # ══════════════════════════════════════════════════════════════════════
     def _handle_all_popups(self):
         prev_q = 0
-        for _ in range(25):
-            time.sleep(0.3)
-            chatbot = self._find_chatbot()
-            if chatbot:
-                qs = self.driver.find_elements(By.CSS_SELECTOR, "div.botMsg.msg span, div.botMsg span, li.botItem span")
-                if len(qs) == prev_q:
-                    self._click_save_send()
-                    time.sleep(0.3)
-                    qs2 = self.driver.find_elements(By.CSS_SELECTOR, "div.botMsg.msg span, div.botMsg span, li.botItem span")
-                    if len(qs2) == prev_q:
-                        break
-                prev_q = len(qs)
-                latest = qs[-1].text.strip() if qs else ""
-                log.info(f"  Q: {latest}")
-                ans = answer_question(latest)
-                if not self._click_chip(ans):
-                    if not self._fill_all_fields(latest):
+        for _ in range(30):
+            time.sleep(0.2)
+            try:
+                if self._find_chatbot():
+                    qs = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
+                    if len(qs) <= prev_q:
+                        self._click_save_send()
+                        time.sleep(0.2)
+                        qs2 = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
+                        if len(qs2) <= prev_q:
+                            break
+                        qs = qs2
+                    prev_q = len(qs)
+                    latest = qs[-1].text.strip() if qs else ""
+                    log.info(f"  Q: {latest}")
+                    ans = answer_question(latest)
+                    # Try all methods: chip → fields → contenteditable
+                    if not self._click_chip(ans):
+                        self._fill_all_fields(latest)
                         self._type_contenteditable(ans)
-                self._click_save_send()
-            else:
-                if not self._fill_all_fields(""):
-                    self._click_any_submit()
-                    break
-                self._click_any_submit()
+                    self._click_save_send()
+                else:
+                    self._fill_all_fields("")
+                    if not self._click_any_submit():
+                        break
+            except Exception as e:
+                log.debug(f"Popup step error: {e}")
+                continue
 
     def _find_chatbot(self):
         for s in ["div.chatbot_DrawerContentWrapper", "div.chatbot_MessageContainer", "div[class*='chatbot_Drawer']"]:
             try:
-                e = self.driver.find_element(By.CSS_SELECTOR, s)
+                e = self._el(s)
                 if e.is_displayed():
                     return e
-            except NoSuchElementException:
+            except Exception:
                 pass
         return None
 
-    # ── Type into contenteditable div ──────────────────────────────────────
+    # ── CONTENTEDITABLE INPUT ──────────────────────────────────────────────
     def _type_contenteditable(self, answer):
-        for s in ["div.textArea[contenteditable='true']", "div[contenteditable='true']",
+        for s in ["div.textArea[contenteditable='true']", "div[contenteditable='true'].textArea",
                    "div.chatbot_InputContainer div[contenteditable]"]:
             try:
-                inp = self.driver.find_element(By.CSS_SELECTOR, s)
+                inp = self._el(s)
                 if inp.is_displayed():
+                    self._scroll(inp)
                     inp.click()
-                    self.driver.execute_script(
+                    self._js(
                         "var e=arguments[0];e.innerText=arguments[1];"
                         "e.dispatchEvent(new Event('input',{bubbles:true}));"
                         "e.dispatchEvent(new Event('change',{bubbles:true}));"
-                        "e.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true}));",
+                        "e.dispatchEvent(new KeyboardEvent('keydown',{key:'a',bubbles:true}));"
+                        "e.dispatchEvent(new KeyboardEvent('keyup',{key:'a',bubbles:true}));",
                         inp, answer)
                     log.info(f"  Typed: {answer}")
                     return True
-            except (NoSuchElementException, ElementNotInteractableException, StaleElementReferenceException):
+            except Exception:
                 pass
         return False
 
-    # ── Click Save/Send ────────────────────────────────────────────────────
+    # ── SAVE / SEND BUTTON ─────────────────────────────────────────────────
     def _click_save_send(self):
-        d = self.driver
-        # Remove disabled from send button container
-        _safe(lambda: d.execute_script(
-            "document.querySelectorAll('.send.disabled').forEach(e=>e.classList.remove('disabled'));"
-            "document.querySelectorAll('.sendMsg').forEach(e=>e.style.pointerEvents='auto');"
+        # Force-enable all send buttons
+        safe(lambda: self._js(
+            "document.querySelectorAll('.send.disabled,.send').forEach(e=>{e.classList.remove('disabled');e.style.pointerEvents='auto';e.style.opacity='1'});"
+            "document.querySelectorAll('.sendMsg').forEach(e=>{e.style.pointerEvents='auto';e.style.opacity='1'});"
         ))
         for s in ["div.sendMsg", "div.send div.sendMsg"]:
             try:
-                b = d.find_element(By.CSS_SELECTOR, s)
+                b = self._el(s)
                 if b.is_displayed():
-                    d.execute_script("arguments[0].click();", b)
+                    self._scroll(b)
+                    self._js("arguments[0].click();", b)
                     return True
-            except (NoSuchElementException, ElementNotInteractableException, StaleElementReferenceException):
+            except Exception:
                 pass
         for x in ["//div[text()='Save']", "//div[text()='Send']", "//button[text()='Save']",
                    "//button[text()='Send']", "//button[text()='Submit']"]:
             try:
-                b = d.find_element(By.XPATH, x)
+                b = self._xel(x)
                 if b.is_displayed():
-                    d.execute_script("arguments[0].click();", b)
+                    self._scroll(b)
+                    self._js("arguments[0].click();", b)
                     return True
-            except (NoSuchElementException, ElementNotInteractableException, StaleElementReferenceException):
+            except Exception:
                 pass
         return False
 
-    # ── Click chip/option ──────────────────────────────────────────────────
+    # ── CHIP / OPTION CLICK ────────────────────────────────────────────────
     def _click_chip(self, answer):
         al = answer.lower()
         for s in ["div.chip", "button.chip", "span.chip", "div.option", "button.option",
                    "li.option", "div.selectable", "div.chipMsg button", "div.footerWrapper button",
-                   "div.footerWrapper div.chip"]:
-            chips = self.driver.find_elements(By.CSS_SELECTOR, s)
-            for c in chips:
+                   "div.footerWrapper div.chip", "div.chatbot_SendMessageContainer button"]:
+            for c in self._els(s):
                 try:
                     ct = c.text.strip().lower()
                     if ct and c.is_displayed() and (al in ct or ct in al):
-                        c.click()
+                        self._scroll(c)
+                        self._click(c)
                         log.info(f"  Chip: {c.text.strip()}")
                         return True
-                except (ElementClickInterceptedException, StaleElementReferenceException, ElementNotInteractableException):
+                except Exception:
                     pass
-        # Click first visible chip if no match
         for s in ["div.chip", "button.chip"]:
-            for c in self.driver.find_elements(By.CSS_SELECTOR, s):
+            for c in self._els(s):
                 try:
                     if c.is_displayed() and c.text.strip():
-                        c.click()
+                        self._scroll(c)
+                        self._click(c)
                         return True
-                except (ElementClickInterceptedException, StaleElementReferenceException, ElementNotInteractableException):
+                except Exception:
                     pass
         return False
 
     # ══════════════════════════════════════════════════════════════════════
-    #  FILL ALL FIELDS — text, number, tel, textarea, select, custom
-    #  dropdown, radio, checkbox, accordion, toggle, date, file
+    #  FILL EVERY FIELD TYPE — instant, scroll into view, JS clicks
     # ══════════════════════════════════════════════════════════════════════
-    def _fill_all_fields(self, context_question=""):
-        d = self.driver
+    def _fill_all_fields(self, ctx=""):
         filled = False
 
-        # ── Expand accordions / collapsed sections first ──
-        for s in ["div.accordion-header", "div[class*='accordion']", "div[class*='collaps']",
-                   "div[class*='expand']", "summary", "div[role='button'][aria-expanded='false']",
-                   "button[aria-expanded='false']", "div.section-header", "h3.toggle", "h4.toggle"]:
-            for el in d.find_elements(By.CSS_SELECTOR, s):
+        # ── 1. Expand accordions / collapsed sections ──
+        for s in ["div[class*='accordion']", "div[class*='collaps']", "summary",
+                   "div[role='button'][aria-expanded='false']", "button[aria-expanded='false']",
+                   "div.section-header", "div[class*='expand']"]:
+            for el in self._els(s):
                 try:
                     if el.is_displayed():
-                        el.click()
-                        time.sleep(0.2)
-                except (ElementClickInterceptedException, ElementNotInteractableException, StaleElementReferenceException):
+                        self._click(el)
+                except Exception:
                     pass
 
-        # ── Text / Number / Tel / Email / URL inputs ──
-        for inp in d.find_elements(By.CSS_SELECTOR,
+        # ── 2. Text / Number / Tel / Email / URL / Textarea ──
+        for inp in self._els(
                 "input[type='text'], input[type='number'], input[type='tel'], "
                 "input[type='email'], input[type='url'], input:not([type]), textarea"):
             try:
@@ -325,54 +377,60 @@ class NaukriApplier:
                     continue
                 if inp.get_attribute("readonly") or inp.get_attribute("disabled"):
                     continue
+                itype = (inp.get_attribute("type") or "").lower()
+                if itype in ("hidden", "submit", "button", "radio", "checkbox", "file"):
+                    continue
                 val = (inp.get_attribute("value") or "").strip()
                 if val:
                     continue
                 label = self._get_label(inp)
-                q = label or context_question
-                ans = answer_question(q)
+                ans = answer_question(label or ctx)
+                self._scroll(inp)
                 inp.click()
                 inp.clear()
                 inp.send_keys(ans)
-                inp.send_keys(Keys.TAB)
                 filled = True
-                log.info(f"  Input '{q}' → {ans}")
-            except (ElementNotInteractableException, StaleElementReferenceException):
+                log.info(f"  Input '{label}' → {ans}")
+            except Exception:
                 pass
 
-        # ── Native <select> dropdowns ──
-        for sel_el in d.find_elements(By.CSS_SELECTOR, "select"):
+        # ── 3. Native <select> ──
+        for sel_el in self._els("select"):
             try:
                 if not sel_el.is_displayed():
                     continue
                 select = Select(sel_el)
                 cv = (select.first_selected_option.get_attribute("value") or "").strip().lower()
                 ct = select.first_selected_option.text.strip().lower()
-                if cv and cv not in ("", "0", "-1", "select", "--select--") and ct not in ("select", "--select--", "choose", ""):
+                skip = ("select", "--select--", "choose", "", "0", "-1")
+                if cv not in skip and ct not in skip:
                     continue
                 label = self._get_label(sel_el)
-                q = label or context_question
-                ans = answer_question(q).lower()
+                ans = answer_question(label or ctx).lower()
+                self._scroll(sel_el)
                 matched = False
                 for opt in select.options:
                     ot = opt.text.strip().lower()
-                    if ot and ot not in ("select", "--select--", "choose", "") and (ans in ot or ot in ans):
+                    if ot in skip:
+                        continue
+                    if ans in ot or ot in ans:
                         select.select_by_visible_text(opt.text)
                         matched = True
                         filled = True
-                        log.info(f"  Select '{q}' → {opt.text.strip()}")
+                        log.info(f"  Select '{label}' → {opt.text.strip()}")
                         break
-                if not matched and len(select.options) > 1:
+                if not matched:
                     for opt in select.options:
-                        if opt.get_attribute("value") and opt.get_attribute("value") not in ("", "0", "-1"):
+                        v = (opt.get_attribute("value") or "").strip()
+                        if v and v not in ("", "0", "-1"):
                             select.select_by_visible_text(opt.text)
                             filled = True
                             break
-            except (ElementNotInteractableException, StaleElementReferenceException, NoSuchElementException):
+            except Exception:
                 pass
 
-        # ── Custom div-based dropdowns ──
-        for dd in d.find_elements(By.CSS_SELECTOR,
+        # ── 4. Custom div dropdowns ──
+        for dd in self._els(
                 "div.customSelect, div.dropdownMainContainer, div[class*='dropdown'], "
                 "div[class*='Dropdown'], div[class*='select-wrapper'], div[class*='SelectBox']"):
             try:
@@ -382,144 +440,164 @@ class NaukriApplier:
                 if dt and dt not in ("select", "choose", "--select--", ""):
                     continue
                 label = self._get_label(dd)
-                ans = answer_question(label or context_question).lower()
-                dd.click()
-                time.sleep(0.2)
-                for opt in d.find_elements(By.CSS_SELECTOR,
-                        "li, div.optionItem, div[class*='option'], ul li, div[class*='Option']"):
+                ans = answer_question(label or ctx).lower()
+                self._scroll(dd)
+                self._click(dd)
+                time.sleep(0.15)
+                for opt in self._els("li, div.optionItem, div[class*='option'], div[class*='Option'], ul li"):
                     try:
                         ot = opt.text.strip().lower()
                         if ot and opt.is_displayed() and (ans in ot or ot in ans):
-                            opt.click()
+                            self._scroll(opt)
+                            self._click(opt)
                             filled = True
+                            log.info(f"  Dropdown '{label}' → {opt.text.strip()}")
                             break
-                    except (ElementClickInterceptedException, StaleElementReferenceException):
+                    except Exception:
                         pass
-            except (ElementNotInteractableException, StaleElementReferenceException, NoSuchElementException):
+            except Exception:
                 pass
 
-        # ── Radio buttons ──
+        # ── 5. Radio buttons ──
         groups = {}
-        for rb in d.find_elements(By.CSS_SELECTOR, "input[type='radio']"):
+        for rb in self._els("input[type='radio']"):
             try:
                 n = rb.get_attribute("name")
                 if n:
                     groups.setdefault(n, []).append(rb)
-            except StaleElementReferenceException:
+            except Exception:
                 pass
         for n, radios in groups.items():
             try:
-                if any(r.is_selected() for r in radios):
+                if any(safe(lambda r=r: r.is_selected()) for r in radios):
                     continue
                 label = self._get_label(radios[0])
-                ans = answer_question(label or context_question).lower()
+                ans = answer_question(label or ctx).lower()
                 clicked = False
                 for r in radios:
                     try:
                         rl = self._get_label(r).lower()
                         if ans in rl or rl in ans or "yes" in rl:
-                            d.execute_script("arguments[0].click();", r)
+                            self._scroll(r)
+                            self._js("arguments[0].click();", r)
                             clicked = True
                             filled = True
+                            log.info(f"  Radio '{label}' → {rl}")
                             break
-                    except (ElementNotInteractableException, StaleElementReferenceException):
+                    except Exception:
                         pass
-                if not clicked:
+                if not clicked and radios:
                     try:
-                        d.execute_script("arguments[0].click();", radios[0])
+                        self._scroll(radios[0])
+                        self._js("arguments[0].click();", radios[0])
                         filled = True
                     except Exception:
                         pass
-            except (StaleElementReferenceException, ElementNotInteractableException):
+            except Exception:
                 pass
 
-        # ── ALL checkboxes — check every unchecked visible checkbox ──
-        for cb in d.find_elements(By.CSS_SELECTOR, "input[type='checkbox']"):
+        # ── 6. ALL checkboxes — check every visible unchecked one ──
+        for cb in self._els("input[type='checkbox']"):
             try:
                 if cb.is_displayed() and not cb.is_selected():
-                    d.execute_script("arguments[0].click();", cb)
+                    self._scroll(cb)
+                    self._js("arguments[0].click();", cb)
                     filled = True
-                    log.info(f"  Checkbox checked")
-            except (ElementNotInteractableException, StaleElementReferenceException):
+            except Exception:
                 pass
 
-        # ── Toggle switches ──
-        for tog in d.find_elements(By.CSS_SELECTOR,
-                "div[class*='toggle'], div[class*='switch'], label.switch, span[class*='toggle']"):
+        # ── 7. Toggle switches ──
+        for tog in self._els("div[class*='toggle'], div[class*='switch'], label.switch, span[class*='toggle']"):
             try:
                 if tog.is_displayed():
-                    aria = tog.get_attribute("aria-checked") or ""
-                    if aria == "false" or not aria:
-                        d.execute_script("arguments[0].click();", tog)
+                    ac = tog.get_attribute("aria-checked") or ""
+                    if ac == "false" or not ac:
+                        self._scroll(tog)
+                        self._js("arguments[0].click();", tog)
                         filled = True
-            except (ElementNotInteractableException, StaleElementReferenceException):
+            except Exception:
                 pass
 
-        # ── Date inputs ──
-        for di in d.find_elements(By.CSS_SELECTOR, "input[type='date'], input[type='month']"):
+        # ── 8. Date inputs ──
+        for di in self._els("input[type='date'], input[type='month']"):
             try:
                 if di.is_displayed() and not (di.get_attribute("value") or "").strip():
+                    self._scroll(di)
                     di.send_keys("2025-01-01")
                     filled = True
-            except (ElementNotInteractableException, StaleElementReferenceException):
+            except Exception:
                 pass
 
-        # ── Contenteditable divs (outside chatbot too) ──
-        for ce in d.find_elements(By.CSS_SELECTOR, "div[contenteditable='true']"):
+        # ── 9. Contenteditable divs ──
+        for ce in self._els("div[contenteditable='true']"):
             try:
                 if ce.is_displayed() and not (ce.text or "").strip():
                     label = self._get_label(ce)
-                    ans = answer_question(label or context_question)
-                    d.execute_script(
+                    ans = answer_question(label or ctx)
+                    self._scroll(ce)
+                    self._js(
                         "var e=arguments[0];e.innerText=arguments[1];"
                         "e.dispatchEvent(new Event('input',{bubbles:true}));", ce, ans)
                     filled = True
-            except (ElementNotInteractableException, StaleElementReferenceException):
+            except Exception:
+                pass
+
+        # ── 10. Range / slider inputs ──
+        for sl in self._els("input[type='range']"):
+            try:
+                if sl.is_displayed():
+                    self._scroll(sl)
+                    mx = sl.get_attribute("max") or "100"
+                    self._js(f"arguments[0].value={int(mx)//2};arguments[0].dispatchEvent(new Event('change'));", sl)
+                    filled = True
+            except Exception:
                 pass
 
         return filled
 
     def _click_any_submit(self):
-        d = self.driver
         for x in ["//button[contains(text(),'Submit')]", "//button[contains(text(),'submit')]",
                    "//button[contains(text(),'Next')]", "//button[contains(text(),'Apply')]",
                    "//button[contains(text(),'Save')]", "//button[contains(text(),'Continue')]",
                    "//button[contains(text(),'Done')]", "//button[contains(text(),'Confirm')]",
                    "//input[@type='submit']", "//button[@type='submit']"]:
             try:
-                b = d.find_element(By.XPATH, x)
+                b = self._xel(x)
                 if b.is_displayed() and b.is_enabled():
-                    d.execute_script("arguments[0].click();", b)
+                    self._scroll(b)
+                    self._js("arguments[0].click();", b)
                     return True
-            except (NoSuchElementException, ElementClickInterceptedException, ElementNotInteractableException):
+            except Exception:
                 pass
         return False
 
-    def _get_label(self, element):
+    # ── LABEL EXTRACTION ───────────────────────────────────────────────────
+    def _get_label(self, el):
         try:
-            eid = element.get_attribute("id")
+            eid = el.get_attribute("id")
             if eid:
-                for l in self.driver.find_elements(By.CSS_SELECTOR, f"label[for='{eid}']"):
-                    if l.text.strip():
-                        return l.text.strip()
+                for l in self._els(f"label[for='{eid}']"):
+                    t = l.text.strip()
+                    if t:
+                        return t
         except Exception:
             pass
         for depth in ["./..", "./../.."]:
             try:
-                p = element.find_element(By.XPATH, depth)
-                for tag in ["label", "span", "p", "div.label"]:
+                p = el.find_element(By.XPATH, depth)
+                for tag in ["label", "span", "p", "div.label", "div.lbl"]:
                     try:
                         l = p.find_element(By.CSS_SELECTOR, tag)
                         t = l.text.strip()
                         if t and len(t) < 200:
                             return t
-                    except NoSuchElementException:
+                    except Exception:
                         pass
             except Exception:
                 pass
         for attr in ["placeholder", "aria-label", "title", "name"]:
             try:
-                v = element.get_attribute(attr)
+                v = el.get_attribute(attr)
                 if v:
                     return v
             except Exception:

@@ -54,10 +54,12 @@ class NaukriApplier:
         self.driver = create_driver()
         try:
             self._login()
-            # Never stop — keep cycling through keywords/locations forever
-            while True:
+            while self.applied < self.max_apps:
                 for kw in self.keywords:
                     for loc in self.locations:
+                        if self.applied >= self.max_apps:
+                            log.info(f"Reached {self.max_apps} applications, stopping")
+                            return
                         try:
                             log.info(f"Search: '{kw}' in '{loc}'")
                             self._search_and_apply(kw, loc)

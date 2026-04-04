@@ -57,18 +57,24 @@ class LinkedInApplier:
         self.driver = create_driver()
         try:
             self._login()
+            combos = [(kw, loc) for kw in self.keywords for loc in self.locations]
+            page = 0
             while self.applied < self.max_apps:
-                for kw in self.keywords:
-                    for loc in self.locations:
-                        if self.applied >= self.max_apps:
-                            log.info(f"Reached {self.max_apps} applications, stopping")
-                            return
-                        try:
-                            log.info(f"Search: '{kw}' in '{loc}'")
-                            self._search_and_apply(kw, loc)
-                        except Exception as e:
-                            log.error(f"Search error: {e}")
-                            continue
+                found_any = False
+                for kw, loc in combos:
+                    if self.applied >= self.max_apps:
+                        log.info(f"Reached {self.max_apps} applications, stopping")
+                        return
+                    try:
+                        count = self._search_page(kw, loc, page)
+                        if count > 0:
+                            found_any = True
+                    except Exception as e:
+                        log.error(f"Search error: {e}")
+                        continue
+                if not found_any:
+                    break
+                page += 1
         except KeyboardInterrupt:
             log.info("Stopped by user")
         except Exception as e:
@@ -164,50 +170,43 @@ class LinkedInApplier:
         return False
 
     # ── SEARCH ─────────────────────────────────────────────────────────────
-    def _search_and_apply(self, keywords, location):
-        page = 0
-        while self.applied < self.max_apps:
-            try:
-                start = page * 25
-                # f_AL=true filters Easy Apply only, sortBy=DD sorts by date
-                url = (
-                    f"{self.BASE}/jobs/search/?keywords={keywords}"
-                    f"&location={location}&f_AL=true&sortBy=DD&start={start}"
-                )
-                self.driver.get(url)
-                time.sleep(1.5)
+    def _search_page(self, keywords, location, page):
+        """Search one page of results. Returns number of jobs found."""
+        try:
+            start = page * 25
+            url = (
+                f"{self.BASE}/jobs/search/?keywords={keywords}"
+                f"&location={location}&f_AL=true&sortBy=DD&start={start}"
+            )
+            self.driver.get(url)
+            time.sleep(1.5)
 
-                # Get job cards
-                cards = self._els("div.job-card-container, li.jobs-search-results__list-item, "
-                                  "div.job-card-list, li.ember-view.jobs-search-results__list-item")
-                if not cards:
-                    # Try scaffold list
-                    cards = self._els("ul.scaffold-layout__list-container > li")
+            cards = self._els("div.job-card-container, li.jobs-search-results__list-item, "
+                              "div.job-card-list, li.ember-view.jobs-search-results__list-item")
+            if not cards:
+                cards = self._els("ul.scaffold-layout__list-container > li")
+            if not cards:
+                return 0
 
-                if not cards:
-                    log.info(f"No jobs page {page + 1}")
-                    break
+            log.info(f"'{keywords}' in '{location}' page {page + 1}: {len(cards)} jobs")
 
-                log.info(f"Page {page + 1}: {len(cards)} jobs")
+            for i, card in enumerate(cards):
+                if self.applied >= self.max_apps:
+                    return len(cards)
+                try:
+                    self._scroll(card)
+                    self._click(card)
+                    time.sleep(0.5)
+                    self._try_easy_apply()
+                except Exception as e:
+                    log.warning(f"Card {i} error: {e}")
+                    self.failed += 1
+                    self._close_modal()
 
-                for i, card in enumerate(cards):
-                    if self.applied >= self.max_apps:
-                        return
-                    try:
-                        self._scroll(card)
-                        self._click(card)
-                        time.sleep(0.5)
-                        self._try_easy_apply()
-                    except Exception as e:
-                        log.warning(f"Card {i} error: {e}")
-                        self.failed += 1
-                        self._close_modal()
-
-                page += 1
-            except Exception as e:
-                log.error(f"Page {page + 1} error: {e}")
-                page += 1
-                continue
+            return len(cards)
+        except Exception as e:
+            log.error(f"Page {page + 1} error: {e}")
+            return 0
 
     # ── EASY APPLY ─────────────────────────────────────────────────────────
     def _try_easy_apply(self):

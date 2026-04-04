@@ -54,18 +54,26 @@ class NaukriApplier:
         self.driver = create_driver()
         try:
             self._login()
+            # Rotate through all keyword+location combos page by page
+            # so we don't exhaust one keyword before trying others
+            combos = [(kw, loc) for kw in self.keywords for loc in self.locations]
+            page = 1
             while self.applied < self.max_apps:
-                for kw in self.keywords:
-                    for loc in self.locations:
-                        if self.applied >= self.max_apps:
-                            log.info(f"Reached {self.max_apps} applications, stopping")
-                            return
-                        try:
-                            log.info(f"Search: '{kw}' in '{loc}'")
-                            self._search_and_apply(kw, loc)
-                        except Exception as e:
-                            log.error(f"Search error: {e}")
-                            continue
+                found_any = False
+                for kw, loc in combos:
+                    if self.applied >= self.max_apps:
+                        log.info(f"Reached {self.max_apps} applications, stopping")
+                        return
+                    try:
+                        count = self._search_page(kw, loc, page)
+                        if count > 0:
+                            found_any = True
+                    except Exception as e:
+                        log.error(f"Search error: {e}")
+                        continue
+                if not found_any:
+                    break
+                page += 1
         except KeyboardInterrupt:
             log.info("Stopped by user")
         except Exception as e:
@@ -142,48 +150,46 @@ class NaukriApplier:
         return "nlogin" not in u and "login" not in u
 
     # ── SEARCH ─────────────────────────────────────────────────────────────
-    def _search_and_apply(self, keywords, location):
+    def _search_page(self, keywords, location, page):
+        """Search one page of results. Returns number of jobs found."""
         kw, loc = keywords.replace(" ", "-"), location.lower().replace(" ", "-")
-        page = 1
-        while True:
-            try:
-                self.driver.get(f"{self.BASE}/{kw}-jobs-in-{loc}?k={keywords}&l={location}&sortBy=date&pageNo={page}")
-                time.sleep(1.2)
-                jobs = []
-                for s in ["div.srp-jobtuple-wrapper a.title", "article.jobTuple a.title",
-                           "div.cust-job-tuple a.title", "a.title"]:
-                    els = self._els(s)
-                    if els:
-                        for e in els:
-                            try:
-                                h, t = e.get_attribute("href"), e.text.strip()
-                                if h and t:
-                                    jobs.append((h, t))
-                            except Exception:
-                                pass
-                        break
-                if not jobs:
-                    log.info(f"No jobs page {page}")
-                    break
-                log.info(f"Page {page}: {len(jobs)} jobs")
-                for h, t in jobs:
-                    try:
-                        self._apply_to_job(h, t)
-                    except Exception as e:
-                        log.warning(f"Error on '{t}': {e}")
-                        self.failed += 1
-                        # Make sure we're back on main window
+        try:
+            self.driver.get(f"{self.BASE}/{kw}-jobs-in-{loc}?k={keywords}&l={location}&sortBy=date&pageNo={page}")
+            time.sleep(1.2)
+            jobs = []
+            for s in ["div.srp-jobtuple-wrapper a.title", "article.jobTuple a.title",
+                       "div.cust-job-tuple a.title", "a.title"]:
+                els = self._els(s)
+                if els:
+                    for e in els:
                         try:
-                            if len(self.driver.window_handles) > 1:
-                                self.driver.close()
-                                self.driver.switch_to.window(self.driver.window_handles[0])
+                            h, t = e.get_attribute("href"), e.text.strip()
+                            if h and t:
+                                jobs.append((h, t))
                         except Exception:
                             pass
-                page += 1
-            except Exception as e:
-                log.error(f"Page {page} error: {e}")
-                page += 1
-                continue
+                    break
+            if not jobs:
+                return 0
+            log.info(f"'{keywords}' in '{location}' page {page}: {len(jobs)} jobs")
+            for h, t in jobs:
+                if self.applied >= self.max_apps:
+                    return len(jobs)
+                try:
+                    self._apply_to_job(h, t)
+                except Exception as e:
+                    log.warning(f"Error on '{t}': {e}")
+                    self.failed += 1
+                    try:
+                        if len(self.driver.window_handles) > 1:
+                            self.driver.close()
+                            self.driver.switch_to.window(self.driver.window_handles[0])
+                    except Exception:
+                        pass
+            return len(jobs)
+        except Exception as e:
+            log.error(f"Page {page} error: {e}")
+            return 0
 
     # ── APPLY ──────────────────────────────────────────────────────────────
     def _apply_to_job(self, url, title):

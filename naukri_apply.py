@@ -414,6 +414,9 @@ class NaukriApplier:
                     ans = answer_question(label or ctx, numeric_only=True)
                     inp.clear()
                     inp.send_keys(ans)
+                # Handle autocomplete dropdown
+                time.sleep(0.3)
+                self._pick_autocomplete(inp, ans)
                 filled = True
                 log.info(f"  Input '{label}' → {ans}")
             except Exception:
@@ -713,3 +716,58 @@ class NaukriApplier:
             except Exception:
                 pass
         return ""
+
+    def _pick_autocomplete(self, inp, answer):
+        """After typing, check if autocomplete dropdown appeared and pick best match."""
+        al = answer.lower()
+        for sel in [
+            "ul[role='listbox'] li", "div[role='listbox'] div[role='option']",
+            "ul.typeahead li", "div.suggestions li", "div[class*='suggest'] li",
+            "div[class*='autocomplete'] li", "div[class*='Autocomplete'] li",
+            "ul.ui-autocomplete li", "div.dropdown-menu li",
+            "div[class*='typeahead'] li",
+        ]:
+            options = self._els(sel)
+            if not options:
+                continue
+            best, best_score = None, 0
+            for opt in options:
+                try:
+                    if not opt.is_displayed():
+                        continue
+                    ot = opt.text.strip().lower()
+                    if not ot:
+                        continue
+                    if al == ot:
+                        best, best_score = opt, 100
+                        break
+                    if al in ot:
+                        s = 90
+                        if s > best_score:
+                            best, best_score = opt, s
+                    elif ot in al:
+                        s = 80
+                        if s > best_score:
+                            best, best_score = opt, s
+                except Exception:
+                    pass
+            if best:
+                self._scroll(best)
+                self._click(best)
+                return True
+            for opt in options:
+                try:
+                    if opt.is_displayed() and opt.text.strip():
+                        self._scroll(opt)
+                        self._click(opt)
+                        return True
+                except Exception:
+                    pass
+        try:
+            inp.send_keys(Keys.ARROW_DOWN)
+            time.sleep(0.1)
+            inp.send_keys(Keys.ENTER)
+            return True
+        except Exception:
+            pass
+        return False

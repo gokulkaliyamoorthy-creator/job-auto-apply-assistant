@@ -369,8 +369,14 @@ class LinkedInApplier:
                     ans = answer_question(label, numeric_only=True)
                     inp.clear()
                     inp.send_keys(ans)
+
+                # Handle autocomplete/typeahead dropdown
+                time.sleep(0.4)
+                if self._pick_autocomplete(inp, ans):
+                    log.info(f"  Autocomplete '{label}' → {ans}")
+                else:
+                    log.info(f"  Input '{label}' → {ans}")
                 filled = True
-                log.info(f"  Input '{label}' → {ans}")
             except Exception:
                 pass
 
@@ -714,6 +720,77 @@ class LinkedInApplier:
                     return
             except Exception:
                 pass
+
+    # ── AUTOCOMPLETE / TYPEAHEAD HANDLER ────────────────────────────────────
+    def _pick_autocomplete(self, inp, answer):
+        """After typing in an input, check if a dropdown appeared and pick best match."""
+        al = answer.lower()
+        # LinkedIn autocomplete selectors
+        for sel in [
+            "div.basic-typeahead__triggered-content li",
+            "div.search-typeahead-v2__hit",
+            "ul[role='listbox'] li",
+            "div[role='listbox'] div[role='option']",
+            "ul.typeahead-results li",
+            "div.artdeco-typeahead__results-list li",
+            "div[class*='typeahead'] li",
+            "div[class*='Typeahead'] li",
+            "ul[id*='typeahead'] li",
+            "div.jobs-easy-apply-form-element__typeahead li",
+        ]:
+            options = self._els(sel)
+            if not options:
+                continue
+            # Try best match first
+            best, best_score = None, 0
+            for opt in options:
+                try:
+                    if not opt.is_displayed():
+                        continue
+                    ot = opt.text.strip().lower()
+                    if not ot:
+                        continue
+                    if al == ot:
+                        best, best_score = opt, 100
+                        break
+                    if al in ot:
+                        s = 90
+                        if s > best_score:
+                            best, best_score = opt, s
+                    elif ot in al:
+                        s = 80
+                        if s > best_score:
+                            best, best_score = opt, s
+                    else:
+                        common = set(al.split()) & set(ot.split())
+                        if common:
+                            s = len(common) * 10
+                            if s > best_score:
+                                best, best_score = opt, s
+                except Exception:
+                    pass
+            if best:
+                self._scroll(best)
+                self._click(best)
+                return True
+            # No match — just click first visible option
+            for opt in options:
+                try:
+                    if opt.is_displayed() and opt.text.strip():
+                        self._scroll(opt)
+                        self._click(opt)
+                        return True
+                except Exception:
+                    pass
+        # Also try pressing arrow down + enter as fallback
+        try:
+            inp.send_keys(Keys.ARROW_DOWN)
+            time.sleep(0.1)
+            inp.send_keys(Keys.ENTER)
+            return True
+        except Exception:
+            pass
+        return False
 
     # ── LABEL EXTRACTION ───────────────────────────────────────────────────
     def _get_label(self, el):

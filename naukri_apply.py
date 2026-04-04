@@ -498,13 +498,78 @@ class NaukriApplier:
             except Exception:
                 pass
 
-        # ── 6. ALL checkboxes — check every visible unchecked one ──
+        # ── 6. ALL checkboxes — native + custom styled ──
+        # 6a. Native checkboxes (visible)
         for cb in self._els("input[type='checkbox']"):
             try:
-                if cb.is_displayed() and not cb.is_selected():
-                    self._scroll(cb)
-                    self._js("arguments[0].click();", cb)
+                if not cb.is_selected():
+                    if cb.is_displayed():
+                        self._scroll(cb)
+                        self._js("arguments[0].click();", cb)
+                        filled = True
+                        log.info("  Checkbox checked (native visible)")
+                    else:
+                        # Hidden native checkbox — click its label or force check via JS
+                        self._js("arguments[0].checked=true;arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", cb)
+                        # Also click the associated label
+                        cid = cb.get_attribute("id")
+                        if cid:
+                            for lbl in self._els(f"label[for='{cid}']"):
+                                try:
+                                    if lbl.is_displayed():
+                                        self._scroll(lbl)
+                                        self._js("arguments[0].click();", lbl)
+                                except Exception:
+                                    pass
+                        # Click parent label if wrapping
+                        try:
+                            parent_label = cb.find_element(By.XPATH, "ancestor::label")
+                            if parent_label.is_displayed():
+                                self._scroll(parent_label)
+                                self._js("arguments[0].click();", parent_label)
+                        except Exception:
+                            pass
+                        filled = True
+                        log.info("  Checkbox checked (native hidden)")
+            except Exception:
+                pass
+
+        # 6b. Custom styled checkboxes (Naukri uses spans/divs as checkboxes)
+        for sel in [
+            "span.checkmark", "span.customCheckbox", "span[class*='check']",
+            "div.checkmark", "div.customCheckbox", "div[class*='checkbox']",
+            "label.checkbox", "label[class*='check']",
+            "div[class*='Checkbox']", "span[class*='Checkbox']",
+            "div[role='checkbox']", "span[role='checkbox']",
+            "div.check-box", "span.check-box",
+        ]:
+            for el in self._els(sel):
+                try:
+                    if not el.is_displayed():
+                        continue
+                    ac = (el.get_attribute("aria-checked") or "").lower()
+                    cls = (el.get_attribute("class") or "").lower()
+                    # Skip if already checked
+                    if ac == "true" or "checked" in cls or "selected" in cls or "active" in cls:
+                        continue
+                    self._scroll(el)
+                    self._js("arguments[0].click();", el)
                     filled = True
+                    log.info(f"  Custom checkbox checked: {sel}")
+                except Exception:
+                    pass
+
+        # 6c. Click any unchecked label that wraps a checkbox-like element
+        for lbl in self._els("label"):
+            try:
+                if not lbl.is_displayed():
+                    continue
+                inner_cb = lbl.find_elements(By.CSS_SELECTOR, "input[type='checkbox']")
+                if inner_cb and not inner_cb[0].is_selected():
+                    self._scroll(lbl)
+                    self._js("arguments[0].click();", lbl)
+                    filled = True
+                    log.info("  Label-wrapped checkbox checked")
             except Exception:
                 pass
 

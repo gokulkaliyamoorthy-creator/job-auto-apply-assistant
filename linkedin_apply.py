@@ -194,18 +194,7 @@ class LinkedInApplier:
                 if self.applied >= self.max_apps:
                     return len(cards)
                 try:
-                    # Get title from card BEFORE clicking
-                    card_title = ""
-                    for tsel in ["a.job-card-list__title", "a.job-card-container__link",
-                                 "strong", "span.job-card-list__title", "a"]:
-                        try:
-                            tel = card.find_element(By.CSS_SELECTOR, tsel)
-                            card_title = tel.text.strip()
-                            if card_title:
-                                break
-                        except Exception:
-                            pass
-
+                    card_title = self._get_card_title(card)
                     self._scroll(card)
                     self._click(card)
                     time.sleep(0.5)
@@ -245,27 +234,10 @@ class LinkedInApplier:
             self.skipped += 1
             return
 
-        # Get job title from detail panel
-        title = ""
-        for sel in ["h1.t-24", "h2.t-24", "h1.job-details-jobs-unified-top-card__job-title",
-                     "h1.jobs-unified-top-card__job-title", "a.job-card-container__link",
-                     "h2.job-details-jobs-unified-top-card__job-title",
-                     "div.job-details-jobs-unified-top-card__job-title",
-                     "h1", "h2"]:
-            try:
-                t = self._el(sel).text.strip()
-                if t and len(t) < 200:
-                    title = t
-                    break
-            except Exception:
-                pass
+        # Get job title — try multiple methods
+        title = self._get_detail_title() or card_title
 
-        # Use card title as fallback
-        if not title:
-            title = card_title
-
-        # Check relevance — if we still have no title, apply anyway
-        # (we searched for AI keywords so results should be relevant)
+        # If no title found, apply anyway (search was AI-specific)
         if title and not is_relevant_job(title):
             log.info(f"Skipped (not AI/ML): {title}")
             self.skipped += 1
@@ -724,6 +696,69 @@ class LinkedInApplier:
                     time.sleep(0.3)
             except Exception:
                 pass
+
+    # ── TITLE EXTRACTION ────────────────────────────────────────────────
+    def _get_card_title(self, card):
+        """Extract job title from a card element."""
+        # Method 1: dismiss button aria-label = "Dismiss {title} job"
+        try:
+            for btn in card.find_elements(By.CSS_SELECTOR, "button[aria-label]"):
+                al = btn.get_attribute("aria-label") or ""
+                if al.lower().startswith("dismiss ") and al.lower().endswith(" job"):
+                    return al[8:-4]
+        except Exception:
+            pass
+        # Method 2: any aria-label containing job-like text
+        try:
+            for el in card.find_elements(By.CSS_SELECTOR, "[aria-label]"):
+                al = (el.get_attribute("aria-label") or "").strip()
+                if al and 3 < len(al) < 100 and "dismiss" not in al.lower():
+                    return al
+        except Exception:
+            pass
+        # Method 3: first short text in <p>, <a>, <strong>, <span>
+        try:
+            for tag in ["a", "strong", "p", "span"]:
+                for el in card.find_elements(By.CSS_SELECTOR, tag):
+                    t = el.text.strip()
+                    if t and 3 < len(t) < 80:
+                        return t
+        except Exception:
+            pass
+        return ""
+
+    def _get_detail_title(self):
+        """Extract job title from the detail panel."""
+        # Method 1: standard selectors
+        for sel in ["h1.t-24", "h2.t-24",
+                     "h1.job-details-jobs-unified-top-card__job-title",
+                     "h1.jobs-unified-top-card__job-title",
+                     "h2.job-details-jobs-unified-top-card__job-title",
+                     "h1", "h2"]:
+            try:
+                t = self._el(sel).text.strip()
+                if t and 3 < len(t) < 200:
+                    return t
+            except Exception:
+                pass
+        # Method 2: dismiss button in detail panel
+        try:
+            for btn in self._els("button[aria-label]"):
+                al = btn.get_attribute("aria-label") or ""
+                if al.lower().startswith("dismiss ") and al.lower().endswith(" job"):
+                    return al[8:-4]
+        except Exception:
+            pass
+        # Method 3: use JS to find first visible short text
+        try:
+            return self._js(
+                "var els=document.querySelectorAll('h1,h2,h3');"
+                "for(var i=0;i<els.length;i++){var t=els[i].innerText.trim();"
+                "if(t.length>3&&t.length<150)return t;}return '';"
+            ) or ""
+        except Exception:
+            pass
+        return ""
 
     def _close_post_apply(self):
         time.sleep(0.3)

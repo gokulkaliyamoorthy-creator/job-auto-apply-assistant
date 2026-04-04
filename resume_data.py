@@ -133,7 +133,7 @@ _NO_KEYWORDS = [
 ]
 
 
-def answer_question(question):
+def answer_question(question, numeric_only=False):
     if not question:
         return RESUME["total_experience"]
     q = question.lower().strip()
@@ -141,41 +141,80 @@ def answer_question(question):
     # ── 1. Direct mapping match (order matters!) ──
     for keywords, value in _QA_MAP:
         if any(k in q for k in keywords):
+            if numeric_only:
+                return _to_numeric(value, q)
             return value
 
     # ── 2. Yes/No intelligence ──
-    for k in _YES_KEYWORDS:
-        if k in q:
-            return "Yes"
-    for k in _NO_KEYWORDS:
-        if k in q:
-            return "No"
+    if not numeric_only:
+        for k in _YES_KEYWORDS:
+            if k in q:
+                return "Yes"
+        for k in _NO_KEYWORDS:
+            if k in q:
+                return "No"
 
     # ── 3. Smart fallback for numeric questions ──
-    # CTC/salary related — return 30 (current) not 9
     if any(w in q for w in ["salary", "ctc", "compensation", "package", "lpa",
                              "lakhs", "lakh", "annual", "pay", "remuneration"]):
         if any(w in q for w in ["expect", "desired", "looking for"]):
             return RESUME["expected_ctc"]
         return RESUME["current_ctc"]
 
-    # Experience related
     if any(w in q for w in ["how many", "number of", "count", "years", "months", "experience"]):
         if any(w in q for w in ["ai", "ml", "genai", "generative", "deep learning",
                                  "nlp", "machine learning", "data science"]):
             return RESUME["relevant_experience"]
         return RESUME["total_experience"]
 
-    # Notice related
     if any(w in q for w in ["notice", "join", "available", "start"]):
+        if numeric_only:
+            return RESUME["notice_period_days"]
         return RESUME["notice_period"]
 
-    # Location related
     if any(w in q for w in ["location", "city", "place", "where"]):
         return RESUME["current_city"]
 
     # ── 4. Final fallback ──
     return RESUME["total_experience"]
+
+
+# Convert text answers to numeric when field only accepts numbers
+_NUMERIC_MAP = {
+    "2 months": "60",
+    "2months": "60",
+    "1 month": "30",
+    "3 months": "90",
+    "15 days": "15",
+    "30 days": "30",
+    "60 days": "60",
+    "90 days": "90",
+    "immediate": "0",
+}
+
+
+def _to_numeric(value, question=""):
+    # Already numeric
+    if value.replace(".", "").replace("-", "").isdigit():
+        return value
+    # Known mappings
+    vl = value.lower().strip()
+    if vl in _NUMERIC_MAP:
+        return _NUMERIC_MAP[vl]
+    # Extract first number from value
+    import re
+    nums = re.findall(r'\d+\.?\d*', value)
+    if nums:
+        return nums[0]
+    # Context-based: if question is about notice/days return 60
+    q = question.lower()
+    if any(w in q for w in ["notice", "days", "join"]):
+        return "60"
+    if any(w in q for w in ["ctc", "salary", "package", "lpa"]):
+        return "30"
+    if any(w in q for w in ["experience", "years"]):
+        return "9"
+    return "0"
 
 
 # ══════════════════════════════════════════════════════════════════════

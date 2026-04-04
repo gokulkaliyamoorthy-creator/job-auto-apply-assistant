@@ -358,11 +358,18 @@ class LinkedInApplier:
                 label = self._get_label(inp)
                 if not label:
                     continue
-                ans = answer_question(label)
+                is_numeric = itype in ("number", "tel") or inp.get_attribute("pattern") in ("[0-9]*", "\\d*", "\\d+")
+                ans = answer_question(label, numeric_only=is_numeric)
                 self._scroll(inp)
                 inp.click()
                 inp.clear()
                 inp.send_keys(ans)
+                time.sleep(0.1)
+                actual = (inp.get_attribute("value") or "").strip()
+                if not actual and not is_numeric:
+                    ans = answer_question(label, numeric_only=True)
+                    inp.clear()
+                    inp.send_keys(ans)
                 filled = True
                 log.info(f"  Input '{label}' → {ans}")
             except Exception:

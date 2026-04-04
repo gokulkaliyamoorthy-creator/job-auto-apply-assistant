@@ -260,7 +260,11 @@ class NaukriApplier:
                     # Try all methods: chip → fields → contenteditable
                     if not self._click_chip(ans):
                         self._fill_all_fields(latest)
-                        self._type_contenteditable(ans)
+                        # For contenteditable, check if question asks for number
+                        q_lower = latest.lower()
+                        is_num_q = any(w in q_lower for w in ["how many", "number", "in days", "in months", "in years", "in lpa", "in lakhs"])
+                        typed_ans = answer_question(latest, numeric_only=is_num_q) if is_num_q else ans
+                        self._type_contenteditable(typed_ans)
                     self._click_save_send()
                 else:
                     self._fill_all_fields("")
@@ -390,11 +394,20 @@ class NaukriApplier:
                 if val:
                     continue
                 label = self._get_label(inp)
-                ans = answer_question(label or ctx)
+                # Detect if field only accepts numbers
+                is_numeric = itype in ("number", "tel") or inp.get_attribute("pattern") in ("[0-9]*", "\\d*", "\\d+")
+                ans = answer_question(label or ctx, numeric_only=is_numeric)
                 self._scroll(inp)
                 inp.click()
                 inp.clear()
                 inp.send_keys(ans)
+                # Verify: if field rejected text (value empty after typing), retry with numeric
+                time.sleep(0.1)
+                actual = (inp.get_attribute("value") or "").strip()
+                if not actual and not is_numeric:
+                    ans = answer_question(label or ctx, numeric_only=True)
+                    inp.clear()
+                    inp.send_keys(ans)
                 filled = True
                 log.info(f"  Input '{label}' → {ans}")
             except Exception:

@@ -220,41 +220,26 @@ def _to_numeric(value, question=""):
 # ══════════════════════════════════════════════════════════════════════
 #  JOB TITLE RELEVANCE FILTER — only apply to AI/ML related roles
 # ══════════════════════════════════════════════════════════════════════
-_RELEVANT_KEYWORDS = [
-    # Core AI/ML terms
-    "ai", "artificial intelligence", "machine learning", "ml",
-    "deep learning", "generative ai", "genai", "gen ai",
-    "llm", "large language model", "nlp", "natural language",
-    "rag", "retrieval augmented", "computer vision",
-    "data scientist", "data science", "neural network",
-    "prompt engineer", "chatbot", "conversational ai",
-    "speech to text", "stt", "mlops", "ml ops", "ai ops",
-    # Tools/frameworks that indicate AI role
-    "tensorflow", "pytorch", "langchain", "hugging face",
-    "sagemaker", "bedrock", "openai", "gpt", "bert",
-    "transformer", "diffusion", "stable diffusion",
-    # Role titles
-    "ai engineer", "ml engineer", "ai architect", "ml architect",
-    "ai developer", "ml developer", "ai specialist", "ml specialist",
-    "ai consultant", "ai lead", "ml lead", "ai manager",
-    "data engineer", "analytics",
-]
+_RELEVANT_WORDS = {
+    "ai", "ml", "artificial", "intelligence", "machine", "learning",
+    "deep", "generative", "genai", "llm", "nlp", "neural",
+    "data", "science", "scientist", "rag", "prompt", "chatbot",
+    "vision", "tensorflow", "pytorch", "langchain", "mlops",
+    "sagemaker", "bedrock", "openai", "gpt", "bert", "transformer",
+    "analytics", "diffusion", "hugging", "stt", "conversational",
+    "retrieval", "augmented", "computer", "natural", "language",
+    "model", "models", "llms", "prediction", "predictive",
+    "classification", "regression", "clustering", "recommendation",
+    "autonomous", "robotics", "cognitive", "intelligent",
+}
 
 
 def is_relevant_job(title):
     if not title:
         return False
-    t = title.lower()
-    # Direct keyword match
-    if any(k in t for k in _RELEVANT_KEYWORDS):
-        return True
-    # Fuzzy: check if title words overlap with AI-related words
-    title_words = set(t.replace("/", " ").replace("-", " ").split())
-    ai_words = {"ai", "ml", "artificial", "intelligence", "machine", "learning",
-                "deep", "generative", "genai", "llm", "nlp", "neural", "data",
-                "science", "scientist", "rag", "prompt", "chatbot", "vision",
-                "tensorflow", "pytorch", "langchain", "mlops", "sagemaker",
-                "bedrock", "openai", "gpt", "bert", "transformer", "analytics"}
-    if title_words & ai_words:
-        return True
-    return False
+    # Normalize: lowercase, replace all separators with space
+    import re
+    t = re.sub(r'[^a-z0-9]+', ' ', title.lower())
+    words = set(t.split())
+    # If ANY word in the title is AI-related, apply
+    return bool(words & _RELEVANT_WORDS)

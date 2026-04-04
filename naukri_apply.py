@@ -410,24 +410,44 @@ class NaukriApplier:
                 label = self._get_label(sel_el)
                 ans = answer_question(label or ctx).lower()
                 self._scroll(sel_el)
-                matched = False
+                best_opt, best_score = None, 0
+                ans_words = set(ans.split())
                 for opt in select.options:
                     ot = opt.text.strip().lower()
                     if ot in skip:
                         continue
-                    if ans in ot or ot in ans:
-                        select.select_by_visible_text(opt.text)
-                        matched = True
-                        filled = True
-                        log.info(f"  Select '{label}' → {opt.text.strip()}")
+                    # Exact match
+                    if ans == ot:
+                        best_opt, best_score = opt, 100
                         break
-                if not matched:
-                    for opt in select.options:
-                        v = (opt.get_attribute("value") or "").strip()
-                        if v and v not in ("", "0", "-1"):
-                            select.select_by_visible_text(opt.text)
-                            filled = True
-                            break
+                    # Answer contained in option or vice versa (full phrase)
+                    if len(ans) > 2 and ans in ot:
+                        score = 90
+                        if score > best_score:
+                            best_opt, best_score = opt, score
+                    elif len(ot) > 2 and ot in ans:
+                        score = 80
+                        if score > best_score:
+                            best_opt, best_score = opt, score
+                    else:
+                        # Word overlap scoring
+                        ot_words = set(ot.split())
+                        common = ans_words & ot_words
+                        if common:
+                            score = len(common) * 10
+                            if score > best_score:
+                                best_opt, best_score = opt, score
+                if best_opt:
+                    select.select_by_visible_text(best_opt.text)
+                    filled = True
+                    log.info(f"  Select '{label}' → {best_opt.text.strip()} (score:{best_score})")
+                else:
+                    # Last resort: pick last option (usually highest value)
+                    valid = [o for o in select.options if (o.get_attribute("value") or "").strip() not in ("", "0", "-1")]
+                    if valid:
+                        select.select_by_visible_text(valid[-1].text)
+                        filled = True
+                        log.info(f"  Select '{label}' → {valid[-1].text.strip()} (fallback last)")
             except Exception:
                 pass
 

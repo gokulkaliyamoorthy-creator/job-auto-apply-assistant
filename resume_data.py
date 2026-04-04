@@ -16,7 +16,7 @@ RESUME = {
     "education": "B.E. Computer Science and Engineering",
     "college": "Sri Sairam Engineering College, Chennai",
     "graduation_year": "2017",
-    "notice_period": "2 months",
+    "notice_period": "2 Months",
     "notice_period_days": "60",
     "current_ctc": "30",
     "current_ctc_lpa": "30 LPA",

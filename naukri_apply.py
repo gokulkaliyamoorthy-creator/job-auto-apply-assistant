@@ -51,34 +51,79 @@ class NaukriApplier:
     # ── Login ──────────────────────────────────────────────────────────────
     def _login(self):
         self.driver.get(f"{self.BASE}/nlogin/login")
-        time.sleep(3)
+        time.sleep(4)
 
-        # Try Google login button first (Edge profile already has Google session)
-        try:
-            google_btn = self.driver.find_element(
-                By.XPATH,
-                "//button[contains(@class,'google') or contains(text(),'Google')]"
-                "|//div[contains(@class,'google')]"
-                "|//a[contains(@href,'google')]",
-            )
-            google_btn.click()
-            time.sleep(5)
-            # If a Google account picker appears, select the right account
+        # Step 1: Find and click "Sign in with Google" button on Naukri login page
+        google_clicked = False
+        google_selectors = [
+            "//button[contains(text(),'Sign in with Google')]",
+            "//button[contains(text(),'Google')]",
+            "//div[contains(text(),'Sign in with Google')]",
+            "//span[contains(text(),'Sign in with Google')]",
+            "//div[contains(@class,'google-login')]",
+            "//button[contains(@class,'google')]",
+            "//div[contains(@class,'google')]",
+            "//div[@id='google-login-btn']",
+            "//iframe[contains(@src,'google')]",
+        ]
+        for sel in google_selectors:
             try:
-                accounts = self.driver.find_elements(
-                    By.XPATH, f"//div[@data-email='{self.email}']"
-                )
-                if accounts:
-                    accounts[0].click()
-                    time.sleep(5)
-            except Exception:
-                pass
-            # Check if we landed on the homepage (login success)
+                btn = self.driver.find_element(By.XPATH, sel)
+                if btn.is_displayed():
+                    btn.click()
+                    google_clicked = True
+                    log.info(f"Clicked Google sign-in button: {sel}")
+                    break
+            except (NoSuchElementException, ElementClickInterceptedException):
+                continue
+
+        if google_clicked:
+            time.sleep(5)
+            # Step 2: Handle Google account picker popup window
+            main_window = self.driver.current_window_handle
+            all_windows = self.driver.window_handles
+
+            if len(all_windows) > 1:
+                # Switch to Google popup window
+                for w in all_windows:
+                    if w != main_window:
+                        self.driver.switch_to.window(w)
+                        break
+                time.sleep(3)
+                log.info(f"Google popup URL: {self.driver.current_url}")
+
+                # Try to select the account by email
+                account_selectors = [
+                    f"//div[@data-email='{self.email}']",
+                    f"//div[contains(text(),'{self.email}')]",
+                    f"//li[contains(.,'{self.email}')]",
+                    f"//div[@data-identifier='{self.email}']",
+                    f"//div[contains(@data-email,'{self.email.split('@')[0]}')]",
+                ]
+                for sel in account_selectors:
+                    try:
+                        account = self.driver.find_element(By.XPATH, sel)
+                        account.click()
+                        log.info(f"Selected Google account: {self.email}")
+                        break
+                    except NoSuchElementException:
+                        continue
+
+                time.sleep(5)
+                # Switch back to main window (popup closes after selection)
+                try:
+                    self.driver.switch_to.window(main_window)
+                except Exception:
+                    self.driver.switch_to.window(self.driver.window_handles[0])
+            else:
+                # No popup — Google might have auto-logged in on same page
+                time.sleep(3)
+
+            time.sleep(5)
             if "nlogin" not in self.driver.current_url:
                 log.info("Naukri login via Google successful")
                 return
-        except NoSuchElementException:
-            log.info("Google login button not found, falling back to email/password")
+            log.info("Google login did not complete, falling back to email/password")
 
         # Fallback: email + password login
         try:
@@ -243,7 +288,7 @@ class NaukriApplier:
                     select = Select(sel_el)
                     if select.first_selected_option.get_attribute("value") in ("", "0", "-1"):
                         label = self._get_label_for(sel_el)
-                        ans = answer_question(label) if label else RESUME["experience_years"]
+                        ans = answer_question(label) if label else RESUME["total_experience"]
                         for opt in select.options:
                             if ans.lower() in opt.text.lower():
                                 select.select_by_visible_text(opt.text)

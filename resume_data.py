@@ -234,7 +234,76 @@ _RELEVANT_WORDS = {
 }
 
 
-def is_relevant_job(title):
+# LinkedIn needs full numeric values for input fields
+_LINKEDIN_NUMERIC = {
+    # Notice period
+    "notice_period": "60",
+    "notice_period_days": "60",
+    # CTC in actual numbers (LPA to annual)
+    "current_ctc": "3000000",
+    "current_ctc_lpa": "3000000",
+    "fixed_ctc": "2870000",
+    "variable_ctc": "130000",
+    "expected_ctc": "4000000",
+    "expected_ctc_lpa": "4000000",
+    # Experience
+    "total_experience": "9",
+    "relevant_experience": "5",
+    # Phone
+    "phone": "8489122277",
+    "phone_alt": "8489122277",
+}
+
+
+def answer_question_linkedin(question, numeric_only=False):
+    """LinkedIn-specific: always returns numeric for salary/ctc/notice/experience fields."""
+    if not question:
+        return RESUME["total_experience"]
+    q = question.lower().strip()
+
+    # CTC / Salary — return full numeric (annual)
+    if any(w in q for w in ["expected ctc", "expected salary", "expected annual",
+                             "expected compensation", "desired salary", "desired ctc",
+                             "expectation", "expected package"]):
+        return "4000000"
+    if any(w in q for w in ["current ctc", "current salary", "current annual",
+                             "present salary", "present ctc", "last drawn",
+                             "annual ctc", "yearly salary", "current package",
+                             "present package"]):
+        return "3000000"
+    if any(w in q for w in ["fixed ctc", "fixed salary", "fixed component", "base salary", "base ctc"]):
+        return "2870000"
+    if any(w in q for w in ["variable ctc", "variable salary", "variable component", "bonus", "incentive"]):
+        return "130000"
+    if any(w in q for w in ["ctc", "salary", "compensation", "package", "lpa",
+                             "lakhs", "lakh", "annual income", "remuneration",
+                             "pay", "stipend"]):
+        if any(w in q for w in ["expect", "desired", "looking for"]):
+            return "4000000"
+        return "3000000"
+
+    # Notice period — always days
+    if any(w in q for w in ["notice period", "notice", "joining time",
+                             "when can you join", "earliest joining",
+                             "how soon", "availability to join", "joining date"]):
+        return "60"
+
+    # Experience — years as number
+    if any(w in q for w in ["relevant experience", "ai experience", "ml experience",
+                             "genai experience", "generative ai experience",
+                             "related experience", "experience in ai",
+                             "experience in ml", "experience in gen",
+                             "experience in deep", "experience in nlp",
+                             "experience in machine"]):
+        return "5"
+    if any(w in q for w in ["total experience", "years of experience", "total years",
+                             "overall experience", "how many year", "work experience",
+                             "professional experience", "experience in year",
+                             "total work", "it experience", "experience"]):
+        return "9"
+
+    # Fall through to normal answer for non-numeric fields
+    return answer_question(question, numeric_only=numeric_only)
     if not title:
         return False
     import re

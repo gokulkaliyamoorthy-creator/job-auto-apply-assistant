@@ -5,7 +5,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import Select
 from selenium.common.exceptions import *
 from browser_utils import create_driver, wait_and_click, wait_for
-from resume_data import answer_question, RESUME, is_relevant_job
+from resume_data import answer_question, answer_question_linkedin, RESUME, is_relevant_job
 
 log = logging.getLogger(__name__)
 
@@ -194,7 +194,20 @@ class LinkedInApplier:
                 if self.applied >= self.max_apps:
                     return len(cards)
                 try:
+                    # Get ALL text from card to check relevance
+                    card_text = ""
+                    try:
+                        card_text = card.text or ""
+                    except Exception:
+                        pass
                     card_title = self._get_card_title(card)
+
+                    # Check relevance using full card text OR title
+                    if not is_relevant_job(card_title) and not is_relevant_job(card_text):
+                        log.info(f"Skipped card (not AI): {card_title or card_text[:60]}")
+                        self.skipped += 1
+                        continue
+
                     self._scroll(card)
                     self._click(card)
                     time.sleep(0.5)
@@ -234,14 +247,12 @@ class LinkedInApplier:
             self.skipped += 1
             return
 
-        # Get job title — try multiple methods
+        # Get job title
         title = self._get_detail_title() or card_title
 
-        # If no title found, apply anyway (search was AI-specific)
-        if title and not is_relevant_job(title):
-            log.info(f"Skipped (not AI/ML): {title}")
-            self.skipped += 1
-            return
+        # Already filtered at card level, so just apply
+        # Double check only if we have a clear non-AI title
+        # (skip this check — card-level filter already passed)
 
         self._click(btn)
         time.sleep(0.5)
@@ -350,7 +361,7 @@ class LinkedInApplier:
                 if not label:
                     continue
                 is_numeric = itype in ("number", "tel") or inp.get_attribute("pattern") in ("[0-9]*", "\\d*", "\\d+")
-                ans = answer_question(label, numeric_only=is_numeric)
+                ans = answer_question_linkedin(label, numeric_only=is_numeric)
                 self._scroll(inp)
                 inp.click()
                 inp.clear()
@@ -358,7 +369,7 @@ class LinkedInApplier:
                 time.sleep(0.1)
                 actual = (inp.get_attribute("value") or "").strip()
                 if not actual and not is_numeric:
-                    ans = answer_question(label, numeric_only=True)
+                    ans = answer_question_linkedin(label, numeric_only=True)
                     inp.clear()
                     inp.send_keys(ans)
 
@@ -383,7 +394,7 @@ class LinkedInApplier:
                 if val:
                     continue
                 label = self._get_label(ta)
-                ans = answer_question(label or "summary")
+                ans = answer_question_linkedin(label or "summary")
                 self._scroll(ta)
                 ta.click()
                 ta.clear()
@@ -405,7 +416,7 @@ class LinkedInApplier:
                 if cv not in skip and ct not in skip:
                     continue
                 label = self._get_label(sel_el)
-                ans = answer_question(label or "").lower()
+                ans = answer_question_linkedin(label or "").lower()
                 self._scroll(sel_el)
 
                 # Scored matching
@@ -463,7 +474,7 @@ class LinkedInApplier:
                 self._click(dd)
                 time.sleep(0.2)
                 label = self._get_label(dd)
-                ans = answer_question(label or "").lower()
+                ans = answer_question_linkedin(label or "").lower()
                 for opt in self._els("li[data-test-text-selectable-option__option], "
                                      "div.artdeco-dropdown__item, li.artdeco-dropdown__item"):
                     try:
@@ -495,7 +506,7 @@ class LinkedInApplier:
                             break
                     except Exception:
                         pass
-                ans = answer_question(q).lower()
+                ans = answer_question_linkedin(q).lower()
 
                 clicked = False
                 for r in radios:
@@ -547,7 +558,7 @@ class LinkedInApplier:
                 if any(safe(lambda r=r: r.is_selected()) for r in radios):
                     continue
                 label = self._get_label(radios[0])
-                ans = answer_question(label or "").lower()
+                ans = answer_question_linkedin(label or "").lower()
                 clicked = False
                 for r in radios:
                     try:
@@ -657,7 +668,7 @@ class LinkedInApplier:
             try:
                 if ce.is_displayed() and not (ce.text or "").strip():
                     label = self._get_label(ce)
-                    ans = answer_question(label or "summary")
+                    ans = answer_question_linkedin(label or "summary")
                     self._scroll(ce)
                     self._js("var e=arguments[0];e.innerText=arguments[1];"
                              "e.dispatchEvent(new Event('input',{bubbles:true}));", ce, ans)

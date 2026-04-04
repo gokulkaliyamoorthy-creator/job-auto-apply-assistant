@@ -304,15 +304,12 @@ def answer_question_linkedin(question, numeric_only=False):
 
     # Fall through to normal answer for non-numeric fields
     return answer_question(question, numeric_only=numeric_only)
+
+
+def is_relevant_job(title):
     if not title:
         return False
     import re
     t = re.sub(r'[^a-z0-9]+', ' ', title.lower()).strip()
     words = set(t.split())
-    match = words & _RELEVANT_WORDS
-    if match:
-        return True
-    # Log what we're checking so we can debug
-    import logging
-    logging.getLogger(__name__).warning(f"SKIPPED title='{title}' normalized='{t}' words={words}")
-    return False
+    return bool(words & _RELEVANT_WORDS)

@@ -19,7 +19,7 @@ def create_driver(headless=False):
     if headless:
         opts.add_argument("--headless=new")
     driver = webdriver.Edge(options=opts)
-    driver.implicitly_wait(5)
+    driver.implicitly_wait(0)
     return driver
 
 

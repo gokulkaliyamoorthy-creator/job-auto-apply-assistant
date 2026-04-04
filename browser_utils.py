@@ -14,7 +14,7 @@ def create_driver(headless=False):
     opts.add_argument("--start-maximized")
     opts.add_argument("--disable-blink-features=AutomationControlled")
     opts.add_experimental_option("excludeSwitches", ["enable-automation"])
-    opts.add_argument(r"--user-data-dir=C:\Users\fe901f\AppData\Local\Microsoft\Edge\User Data")
+    opts.add_argument(r"--user-data-dir=C:\Users\Gokul\AppData\Local\Microsoft\Edge\User Data")
     opts.add_argument("--profile-directory=Default")
     if headless:
         opts.add_argument("--headless=new")

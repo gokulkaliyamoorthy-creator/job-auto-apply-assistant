@@ -237,9 +237,13 @@ _RELEVANT_WORDS = {
 def is_relevant_job(title):
     if not title:
         return False
-    # Normalize: lowercase, replace all separators with space
     import re
-    t = re.sub(r'[^a-z0-9]+', ' ', title.lower())
+    t = re.sub(r'[^a-z0-9]+', ' ', title.lower()).strip()
     words = set(t.split())
-    # If ANY word in the title is AI-related, apply
-    return bool(words & _RELEVANT_WORDS)
+    match = words & _RELEVANT_WORDS
+    if match:
+        return True
+    # Log what we're checking so we can debug
+    import logging
+    logging.getLogger(__name__).warning(f"SKIPPED title='{title}' normalized='{t}' words={words}")
+    return False

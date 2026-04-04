@@ -194,10 +194,22 @@ class LinkedInApplier:
                 if self.applied >= self.max_apps:
                     return len(cards)
                 try:
+                    # Get title from card BEFORE clicking
+                    card_title = ""
+                    for tsel in ["a.job-card-list__title", "a.job-card-container__link",
+                                 "strong", "span.job-card-list__title", "a"]:
+                        try:
+                            tel = card.find_element(By.CSS_SELECTOR, tsel)
+                            card_title = tel.text.strip()
+                            if card_title:
+                                break
+                        except Exception:
+                            pass
+
                     self._scroll(card)
                     self._click(card)
                     time.sleep(0.5)
-                    self._try_easy_apply()
+                    self._try_easy_apply(card_title)
                 except Exception as e:
                     log.warning(f"Card {i} error: {e}")
                     self.failed += 1
@@ -209,8 +221,7 @@ class LinkedInApplier:
             return 0
 
     # ── EASY APPLY ─────────────────────────────────────────────────────────
-    def _try_easy_apply(self):
-        # Find Easy Apply button
+    def _try_easy_apply(self, card_title=""):
         btn = None
         for sel in [
             "//button[contains(@class,'jobs-apply-button')]",
@@ -234,19 +245,28 @@ class LinkedInApplier:
             self.skipped += 1
             return
 
-        # Get job title
-        title = "Unknown"
+        # Get job title from detail panel
+        title = ""
         for sel in ["h1.t-24", "h2.t-24", "h1.job-details-jobs-unified-top-card__job-title",
-                     "h1.jobs-unified-top-card__job-title", "a.job-card-container__link"]:
+                     "h1.jobs-unified-top-card__job-title", "a.job-card-container__link",
+                     "h2.job-details-jobs-unified-top-card__job-title",
+                     "div.job-details-jobs-unified-top-card__job-title",
+                     "h1", "h2"]:
             try:
-                title = self._el(sel).text.strip()
-                if title:
+                t = self._el(sel).text.strip()
+                if t and len(t) < 200:
+                    title = t
                     break
             except Exception:
                 pass
 
-        # Check if job is AI/ML related
-        if not is_relevant_job(title):
+        # Use card title as fallback
+        if not title:
+            title = card_title
+
+        # Check relevance — if we still have no title, apply anyway
+        # (we searched for AI keywords so results should be relevant)
+        if title and not is_relevant_job(title):
             log.info(f"Skipped (not AI/ML): {title}")
             self.skipped += 1
             return

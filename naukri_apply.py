@@ -54,18 +54,26 @@ class NaukriApplier:
         self.driver = create_driver()
         try:
             self._login()
+            # Rotate through all keyword+location combos page by page
+            # so we don't exhaust one keyword before trying others
+            combos = [(kw, loc) for kw in self.keywords for loc in self.locations]
+            page = 1
             while self.applied < self.max_apps:
-                for kw in self.keywords:
-                    for loc in self.locations:
-                        if self.applied >= self.max_apps:
-                            log.info(f"Reached {self.max_apps} applications, stopping")
-                            return
-                        try:
-                            log.info(f"Search: '{kw}' in '{loc}'")
-                            self._search_and_apply(kw, loc)
-                        except Exception as e:
-                            log.error(f"Search error: {e}")
-                            continue
+                found_any = False
+                for kw, loc in combos:
+                    if self.applied >= self.max_apps:
+                        log.info(f"Reached {self.max_apps} applications, stopping")
+                        return
+                    try:
+                        count = self._search_page(kw, loc, page)
+                        if count > 0:
+                            found_any = True
+                    except Exception as e:
+                        log.error(f"Search error: {e}")
+                        continue
+                if not found_any:
+                    break
+                page += 1
         except KeyboardInterrupt:
             log.info("Stopped by user")
         except Exception as e:
@@ -142,48 +150,46 @@ class NaukriApplier:
         return "nlogin" not in u and "login" not in u
 
     # ── SEARCH ─────────────────────────────────────────────────────────────
-    def _search_and_apply(self, keywords, location):
+    def _search_page(self, keywords, location, page):
+        """Search one page of results. Returns number of jobs found."""
         kw, loc = keywords.replace(" ", "-"), location.lower().replace(" ", "-")
-        page = 1
-        while True:
-            try:
-                self.driver.get(f"{self.BASE}/{kw}-jobs-in-{loc}?k={keywords}&l={location}&sortBy=date&pageNo={page}")
-                time.sleep(0.3)
-                jobs = []
-                for s in ["div.srp-jobtuple-wrapper a.title", "article.jobTuple a.title",
-                           "div.cust-job-tuple a.title", "a.title"]:
-                    els = self._els(s)
-                    if els:
-                        for e in els:
-                            try:
-                                h, t = e.get_attribute("href"), e.text.strip()
-                                if h and t:
-                                    jobs.append((h, t))
-                            except Exception:
-                                pass
-                        break
-                if not jobs:
-                    log.info(f"No jobs page {page}")
-                    break
-                log.info(f"Page {page}: {len(jobs)} jobs")
-                for h, t in jobs:
-                    try:
-                        self._apply_to_job(h, t)
-                    except Exception as e:
-                        log.warning(f"Error on '{t}': {e}")
-                        self.failed += 1
-                        # Make sure we're back on main window
+        try:
+            self.driver.get(f"{self.BASE}/{kw}-jobs-in-{loc}?k={keywords}&l={location}&sortBy=date&pageNo={page}")
+            time.sleep(1.2)
+            jobs = []
+            for s in ["div.srp-jobtuple-wrapper a.title", "article.jobTuple a.title",
+                       "div.cust-job-tuple a.title", "a.title"]:
+                els = self._els(s)
+                if els:
+                    for e in els:
                         try:
-                            if len(self.driver.window_handles) > 1:
-                                self.driver.close()
-                            self.driver.switch_to.window(self.driver.window_handles[0])
+                            h, t = e.get_attribute("href"), e.text.strip()
+                            if h and t:
+                                jobs.append((h, t))
                         except Exception:
                             pass
-                page += 1
-            except Exception as e:
-                log.error(f"Page {page} error: {e}")
-                page += 1
-                continue
+                    break
+            if not jobs:
+                return 0
+            log.info(f"'{keywords}' in '{location}' page {page}: {len(jobs)} jobs")
+            for h, t in jobs:
+                if self.applied >= self.max_apps:
+                    return len(jobs)
+                try:
+                    self._apply_to_job(h, t)
+                except Exception as e:
+                    log.warning(f"Error on '{t}': {e}")
+                    self.failed += 1
+                    try:
+                        if len(self.driver.window_handles) > 1:
+                            self.driver.close()
+                            self.driver.switch_to.window(self.driver.window_handles[0])
+                    except Exception:
+                        pass
+            return len(jobs)
+        except Exception as e:
+            log.error(f"Page {page} error: {e}")
+            return 0
 
     # ── APPLY ──────────────────────────────────────────────────────────────
     def _apply_to_job(self, url, title):
@@ -191,7 +197,7 @@ class NaukriApplier:
         mw = d.current_window_handle
         d.execute_script("window.open(arguments[0]);", url)
         d.switch_to.window(d.window_handles[-1])
-        time.sleep(0.1)
+        time.sleep(0.4)
         try:
             btn = self._find_apply_btn()
             if not btn:
@@ -205,6 +211,7 @@ class NaukriApplier:
                 self.skipped += 1
                 return
             self._click(btn)
+            time.sleep(0.3)
             self._handle_all_popups()
             self.applied += 1
             log.info(f"[{self.applied}] Applied: {title}")
@@ -213,16 +220,14 @@ class NaukriApplier:
             self.failed += 1
         finally:
             try:
-                if d.current_window_handle != mw:
-                    d.close()
+                d.close()
             except Exception:
                 pass
             try:
                 d.switch_to.window(mw)
             except Exception:
                 try:
-                    if d.window_handles:
-                        d.switch_to.window(d.window_handles[0])
+                    d.switch_to.window(d.window_handles[0])
                 except Exception:
                     pass
 
@@ -237,20 +242,19 @@ class NaukriApplier:
                 pass
         return None
 
-    # ═══════d═══════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════
     #  POPUP HANDLER — chatbot + form, never stops
     # ══════════════════════════════════════════════════════════════════════
     def _handle_all_popups(self):
         prev_q = 0
-        for rnd in range(20):
-            if rnd == 0:
-                time.sleep(0.3)  # first round: let popup render
+        for _ in range(30):
+            time.sleep(0.2)
             try:
                 if self._find_chatbot():
                     qs = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
                     if len(qs) <= prev_q:
                         self._click_save_send()
-                        time.sleep(0.15)
+                        time.sleep(0.2)
                         qs2 = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
                         if len(qs2) <= prev_q:
                             break
@@ -259,15 +263,15 @@ class NaukriApplier:
                     latest = qs[-1].text.strip() if qs else ""
                     log.info(f"  Q: {latest}")
                     ans = answer_question(latest)
-                    # Try all methods: label → chip → fields → contenteditable → then save
+                    # Try all methods: chip → fields → contenteditable
                     if not self._click_chip(ans):
                         self._fill_all_fields(latest)
+                        # For contenteditable, check if question asks for number
                         q_lower = latest.lower()
                         is_num_q = any(w in q_lower for w in ["how many", "number", "in days", "in months", "in years", "in lpa", "in lakhs"])
                         typed_ans = answer_question(latest, numeric_only=is_num_q) if is_num_q else ans
                         self._type_contenteditable(typed_ans)
                     self._click_save_send()
-                    time.sleep(0.15)  # let next question load
                 else:
                     self._fill_all_fields("")
                     if not self._click_any_submit():
@@ -339,8 +343,7 @@ class NaukriApplier:
     # ── CHIP / OPTION CLICK ────────────────────────────────────────────────
     def _click_chip(self, answer):
         al = answer.lower()
-        for s in ["label.ssrc__label", "div.ssrc__radio-btn-container label",
-                   "div.chip", "button.chip", "span.chip", "div.option", "button.option",
+        for s in ["div.chip", "button.chip", "span.chip", "div.option", "button.option",
                    "li.option", "div.selectable", "div.chipMsg button", "div.footerWrapper button",
                    "div.footerWrapper div.chip", "div.chatbot_SendMessageContainer button"]:
             for c in self._els(s):
@@ -405,11 +408,15 @@ class NaukriApplier:
                 inp.clear()
                 inp.send_keys(ans)
                 # Verify: if field rejected text (value empty after typing), retry with numeric
+                time.sleep(0.1)
                 actual = (inp.get_attribute("value") or "").strip()
                 if not actual and not is_numeric:
                     ans = answer_question(label or ctx, numeric_only=True)
                     inp.clear()
                     inp.send_keys(ans)
+                # Handle autocomplete dropdown
+                time.sleep(0.3)
+                self._pick_autocomplete(inp, ans)
                 filled = True
                 log.info(f"  Input '{label}' → {ans}")
             except Exception:
@@ -484,6 +491,7 @@ class NaukriApplier:
                 ans = answer_question(label or ctx).lower()
                 self._scroll(dd)
                 self._click(dd)
+                time.sleep(0.15)
                 for opt in self._els("li, div.optionItem, div[class*='option'], div[class*='Option'], ul li"):
                     try:
                         ot = opt.text.strip().lower()
@@ -708,3 +716,58 @@ class NaukriApplier:
             except Exception:
                 pass
         return ""
+
+    def _pick_autocomplete(self, inp, answer):
+        """After typing, check if autocomplete dropdown appeared and pick best match."""
+        al = answer.lower()
+        for sel in [
+            "ul[role='listbox'] li", "div[role='listbox'] div[role='option']",
+            "ul.typeahead li", "div.suggestions li", "div[class*='suggest'] li",
+            "div[class*='autocomplete'] li", "div[class*='Autocomplete'] li",
+            "ul.ui-autocomplete li", "div.dropdown-menu li",
+            "div[class*='typeahead'] li",
+        ]:
+            options = self._els(sel)
+            if not options:
+                continue
+            best, best_score = None, 0
+            for opt in options:
+                try:
+                    if not opt.is_displayed():
+                        continue
+                    ot = opt.text.strip().lower()
+                    if not ot:
+                        continue
+                    if al == ot:
+                        best, best_score = opt, 100
+                        break
+                    if al in ot:
+                        s = 90
+                        if s > best_score:
+                            best, best_score = opt, s
+                    elif ot in al:
+                        s = 80
+                        if s > best_score:
+                            best, best_score = opt, s
+                except Exception:
+                    pass
+            if best:
+                self._scroll(best)
+                self._click(best)
+                return True
+            for opt in options:
+                try:
+                    if opt.is_displayed() and opt.text.strip():
+                        self._scroll(opt)
+                        self._click(opt)
+                        return True
+                except Exception:
+                    pass
+        try:
+            inp.send_keys(Keys.ARROW_DOWN)
+            time.sleep(0.1)
+            inp.send_keys(Keys.ENTER)
+            return True
+        except Exception:
+            pass
+        return False

@@ -220,23 +220,96 @@ def _to_numeric(value, question=""):
 # ══════════════════════════════════════════════════════════════════════
 #  JOB TITLE RELEVANCE FILTER — only apply to AI/ML related roles
 # ══════════════════════════════════════════════════════════════════════
-_RELEVANT_KEYWORDS = [
-    "ai", "artificial intelligence", "machine learning", "ml",
-    "deep learning", "generative ai", "genai", "gen ai",
-    "llm", "large language model", "nlp", "natural language",
-    "rag", "retrieval augmented", "computer vision", "cv engineer",
-    "data scientist", "data science", "ml engineer", "ai engineer",
-    "ai architect", "ml architect", "ai/ml", "ml/ai",
-    "prompt engineer", "ai developer", "ml developer",
-    "ai specialist", "ml specialist", "ai consultant",
-    "neural network", "tensorflow", "pytorch", "langchain",
-    "chatbot", "conversational ai", "speech to text", "stt",
-    "ai ops", "mlops", "ml ops",
-]
+_RELEVANT_WORDS = {
+    "ai", "ml", "artificial", "intelligence", "machine", "learning",
+    "deep", "generative", "genai", "llm", "nlp", "neural",
+    "data", "science", "scientist", "rag", "prompt", "chatbot",
+    "vision", "tensorflow", "pytorch", "langchain", "mlops",
+    "sagemaker", "bedrock", "openai", "gpt", "bert", "transformer",
+    "analytics", "diffusion", "hugging", "stt", "conversational",
+    "retrieval", "augmented", "computer", "natural", "language",
+    "model", "models", "llms", "prediction", "predictive",
+    "classification", "regression", "clustering", "recommendation",
+    "autonomous", "robotics", "cognitive", "intelligent",
+}
+
+
+# LinkedIn needs full numeric values for input fields
+_LINKEDIN_NUMERIC = {
+    # Notice period
+    "notice_period": "60",
+    "notice_period_days": "60",
+    # CTC in actual numbers (LPA to annual)
+    "current_ctc": "3000000",
+    "current_ctc_lpa": "3000000",
+    "fixed_ctc": "2870000",
+    "variable_ctc": "130000",
+    "expected_ctc": "4000000",
+    "expected_ctc_lpa": "4000000",
+    # Experience
+    "total_experience": "9",
+    "relevant_experience": "5",
+    # Phone
+    "phone": "8489122277",
+    "phone_alt": "8489122277",
+}
+
+
+def answer_question_linkedin(question, numeric_only=False):
+    """LinkedIn-specific: always returns numeric for salary/ctc/notice/experience fields."""
+    if not question:
+        return RESUME["total_experience"]
+    q = question.lower().strip()
+
+    # CTC / Salary — return full numeric (annual)
+    if any(w in q for w in ["expected ctc", "expected salary", "expected annual",
+                             "expected compensation", "desired salary", "desired ctc",
+                             "expectation", "expected package"]):
+        return "4000000"
+    if any(w in q for w in ["current ctc", "current salary", "current annual",
+                             "present salary", "present ctc", "last drawn",
+                             "annual ctc", "yearly salary", "current package",
+                             "present package"]):
+        return "3000000"
+    if any(w in q for w in ["fixed ctc", "fixed salary", "fixed component", "base salary", "base ctc"]):
+        return "2870000"
+    if any(w in q for w in ["variable ctc", "variable salary", "variable component", "bonus", "incentive"]):
+        return "130000"
+    if any(w in q for w in ["ctc", "salary", "compensation", "package", "lpa",
+                             "lakhs", "lakh", "annual income", "remuneration",
+                             "pay", "stipend"]):
+        if any(w in q for w in ["expect", "desired", "looking for"]):
+            return "4000000"
+        return "3000000"
+
+    # Notice period — always days
+    if any(w in q for w in ["notice period", "notice", "joining time",
+                             "when can you join", "earliest joining",
+                             "how soon", "availability to join", "joining date"]):
+        return "60"
+
+    # Experience — years as number
+    if any(w in q for w in ["relevant experience", "ai experience", "ml experience",
+                             "genai experience", "generative ai experience",
+                             "related experience", "experience in ai",
+                             "experience in ml", "experience in gen",
+                             "experience in deep", "experience in nlp",
+                             "experience in machine"]):
+        return "5"
+    if any(w in q for w in ["total experience", "years of experience", "total years",
+                             "overall experience", "how many year", "work experience",
+                             "professional experience", "experience in year",
+                             "total work", "it experience", "experience"]):
+        return "9"
+
+    # Fall through to normal answer for non-numeric fields
+    return answer_question(question, numeric_only=numeric_only)
 
 
 def is_relevant_job(title):
     if not title:
         return False
-    t = title.lower()
-    return any(k in t for k in _RELEVANT_KEYWORDS)
+    import re
+    t = re.sub(r'[^a-z0-9]+', ' ', title.lower()).strip()
+    words = set(t.split())
+    return bool(words & _RELEVANT_WORDS)

@@ -242,12 +242,15 @@ class NaukriApplier:
     # ══════════════════════════════════════════════════════════════════════
     def _handle_all_popups(self):
         prev_q = 0
-        for _ in range(20):
+        for rnd in range(20):
+            if rnd == 0:
+                time.sleep(0.3)  # first round: let popup render
             try:
                 if self._find_chatbot():
                     qs = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
                     if len(qs) <= prev_q:
                         self._click_save_send()
+                        time.sleep(0.15)
                         qs2 = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
                         if len(qs2) <= prev_q:
                             break
@@ -256,15 +259,15 @@ class NaukriApplier:
                     latest = qs[-1].text.strip() if qs else ""
                     log.info(f"  Q: {latest}")
                     ans = answer_question(latest)
-                    # Try all methods: chip → fields → contenteditable
+                    # Try all methods: label → chip → fields → contenteditable → then save
                     if not self._click_chip(ans):
                         self._fill_all_fields(latest)
-                        # For contenteditable, check if question asks for number
                         q_lower = latest.lower()
                         is_num_q = any(w in q_lower for w in ["how many", "number", "in days", "in months", "in years", "in lpa", "in lakhs"])
                         typed_ans = answer_question(latest, numeric_only=is_num_q) if is_num_q else ans
                         self._type_contenteditable(typed_ans)
                     self._click_save_send()
+                    time.sleep(0.15)  # let next question load
                 else:
                     self._fill_all_fields("")
                     if not self._click_any_submit():

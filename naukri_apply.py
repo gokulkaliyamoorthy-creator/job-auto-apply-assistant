@@ -220,14 +220,16 @@ class NaukriApplier:
             self.failed += 1
         finally:
             try:
-                d.close()
+                if d.current_window_handle != mw:
+                    d.close()
             except Exception:
                 pass
             try:
                 d.switch_to.window(mw)
             except Exception:
                 try:
-                    d.switch_to.window(d.window_handles[0])
+                    if d.window_handles:
+                        d.switch_to.window(d.window_handles[0])
                 except Exception:
                     pass
 
@@ -257,13 +259,15 @@ class NaukriApplier:
                         time.sleep(0.2)
                         qs2 = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
                         if len(qs2) <= prev_q:
+                            # No more questions — click save one final time to submit
+                            self._click_save_send()
                             break
                         qs = qs2
                     prev_q = len(qs)
                     latest = qs[-1].text.strip() if qs else ""
                     log.info(f"  Q: {latest}")
                     ans = answer_question(latest)
-                    # Try all methods: chip → fields → contenteditable
+                    # Try all methods: chip/label → fields → contenteditable
                     if not self._click_chip(ans):
                         self._fill_all_fields(latest)
                         # For contenteditable, check if question asks for number
@@ -279,6 +283,12 @@ class NaukriApplier:
             except Exception as e:
                 log.debug(f"Popup step error: {e}")
                 continue
+        # Final save attempt after loop ends
+        try:
+            self._click_save_send()
+            self._click_any_submit()
+        except Exception:
+            pass
 
     def _find_chatbot(self):
         for s in ["div.chatbot_DrawerContentWrapper", "div.chatbot_MessageContainer", "div[class*='chatbot_Drawer']"]:
@@ -343,7 +353,9 @@ class NaukriApplier:
     # ── CHIP / OPTION CLICK ────────────────────────────────────────────────
     def _click_chip(self, answer):
         al = answer.lower()
-        for s in ["div.chip", "button.chip", "span.chip", "div.option", "button.option",
+        # Try chatbot radio labels first (ssrc__label)
+        for s in ["label.ssrc__label", "div.ssrc__radio-btn-container label",
+                   "div.chip", "button.chip", "span.chip", "div.option", "button.option",
                    "li.option", "div.selectable", "div.chipMsg button", "div.footerWrapper button",
                    "div.footerWrapper div.chip", "div.chatbot_SendMessageContainer button"]:
             for c in self._els(s):

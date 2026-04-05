@@ -148,7 +148,7 @@ class NaukriApplier:
         while True:
             try:
                 self.driver.get(f"{self.BASE}/{kw}-jobs-in-{loc}?k={keywords}&l={location}&sortBy=date&pageNo={page}")
-                time.sleep(0.5)
+                time.sleep(0.3)
                 jobs = []
                 for s in ["div.srp-jobtuple-wrapper a.title", "article.jobTuple a.title",
                            "div.cust-job-tuple a.title", "a.title"]:
@@ -191,7 +191,7 @@ class NaukriApplier:
         mw = d.current_window_handle
         d.execute_script("window.open(arguments[0]);", url)
         d.switch_to.window(d.window_handles[-1])
-        time.sleep(0.2)
+        time.sleep(0.1)
         try:
             btn = self._find_apply_btn()
             if not btn:
@@ -205,7 +205,6 @@ class NaukriApplier:
                 self.skipped += 1
                 return
             self._click(btn)
-            time.sleep(0.15)
             self._handle_all_popups()
             self.applied += 1
             log.info(f"[{self.applied}] Applied: {title}")
@@ -243,14 +242,12 @@ class NaukriApplier:
     # ══════════════════════════════════════════════════════════════════════
     def _handle_all_popups(self):
         prev_q = 0
-        for _ in range(30):
-            time.sleep(0.1)
+        for _ in range(20):
             try:
                 if self._find_chatbot():
                     qs = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
                     if len(qs) <= prev_q:
                         self._click_save_send()
-                        time.sleep(0.1)
                         qs2 = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
                         if len(qs2) <= prev_q:
                             break
@@ -405,7 +402,6 @@ class NaukriApplier:
                 inp.clear()
                 inp.send_keys(ans)
                 # Verify: if field rejected text (value empty after typing), retry with numeric
-                time.sleep(0.05)
                 actual = (inp.get_attribute("value") or "").strip()
                 if not actual and not is_numeric:
                     ans = answer_question(label or ctx, numeric_only=True)
@@ -485,7 +481,6 @@ class NaukriApplier:
                 ans = answer_question(label or ctx).lower()
                 self._scroll(dd)
                 self._click(dd)
-                time.sleep(0.05)
                 for opt in self._els("li, div.optionItem, div[class*='option'], div[class*='Option'], ul li"):
                     try:
                         ot = opt.text.strip().lower()

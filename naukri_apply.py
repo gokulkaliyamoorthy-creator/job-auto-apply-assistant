@@ -10,13 +10,6 @@ from resume_data import answer_question, RESUME, is_relevant_job
 log = logging.getLogger(__name__)
 
 
-def safe(fn):
-    try:
-        return fn()
-    except Exception:
-        return None
-
-
 class NaukriApplier:
     BASE = "https://www.naukri.com"
 
@@ -54,15 +47,12 @@ class NaukriApplier:
         self.driver = create_driver()
         try:
             self._login()
-            # Rotate through all keyword+location combos page by page
-            # so we don't exhaust one keyword before trying others
             combos = [(kw, loc) for kw in self.keywords for loc in self.locations]
             page = 1
             while self.applied < self.max_apps:
                 found_any = False
                 for kw, loc in combos:
                     if self.applied >= self.max_apps:
-                        log.info(f"Reached {self.max_apps} applications, stopping")
                         return
                     try:
                         count = self._search_page(kw, loc, page)
@@ -70,7 +60,6 @@ class NaukriApplier:
                             found_any = True
                     except Exception as e:
                         log.error(f"Search error: {e}")
-                        continue
                 if not found_any:
                     break
                 page += 1
@@ -151,7 +140,6 @@ class NaukriApplier:
 
     # ── SEARCH ─────────────────────────────────────────────────────────────
     def _search_page(self, keywords, location, page):
-        """Search one page of results. Returns number of jobs found."""
         kw, loc = keywords.replace(" ", "-"), location.lower().replace(" ", "-")
         try:
             self.driver.get(f"{self.BASE}/{kw}-jobs-in-{loc}?k={keywords}&l={location}&sortBy=date&pageNo={page}")
@@ -211,7 +199,7 @@ class NaukriApplier:
                 self.skipped += 1
                 return
             self._click(btn)
-            time.sleep(1.0)
+            time.sleep(0.5)
             self._handle_all_popups()
             self.applied += 1
             log.info(f"[{self.applied}] Applied: {title}")
@@ -243,275 +231,193 @@ class NaukriApplier:
         return None
 
     # ══════════════════════════════════════════════════════════════════════
-    #  POPUP HANDLER — chatbot + form, never stops
+    #  POPUP HANDLER — fast, direct
     # ══════════════════════════════════════════════════════════════════════
     def _handle_all_popups(self):
-        time.sleep(1.0)
         prev_q = 0
-        stale_rounds = 0
-        for _ in range(40):
-            time.sleep(0.5)
+        stale = 0
+        for _ in range(25):
+            time.sleep(0.3)
             try:
-                if self._find_chatbot():
-                    qs = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
+                # Check if chatbot is present
+                chatbot = self._els("div.chatbot_DrawerContentWrapper")
+                if chatbot:
+                    qs = self._els("li.botItem div.botMsg span")
+                    if not qs:
+                        qs = self._els("div.botMsg span")
                     if len(qs) <= prev_q:
-                        self._click_save_send()
-                        time.sleep(0.6)
-                        qs = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
+                        self._force_click_save()
+                        time.sleep(0.3)
+                        qs = self._els("li.botItem div.botMsg span") or self._els("div.botMsg span")
                         if len(qs) <= prev_q:
-                            stale_rounds += 1
-                            if stale_rounds >= 3:
+                            stale += 1
+                            if stale >= 3:
                                 break
                             continue
-                    stale_rounds = 0
+                    stale = 0
                     prev_q = len(qs)
-                    latest = qs[-1].text.strip() if qs else ""
-                    log.info(f"  Q: {latest}")
-                    ans = answer_question(latest)
-                    # 1. Try chatbot-specific radio/checkbox/label clicks
-                    if self._chatbot_select_option(ans):
-                        log.info(f"  Selected option for: {latest}")
-                    # 2. Try chips
-                    elif self._click_chip(ans):
-                        pass
-                    # 3. Try filling form fields inside chatbot
-                    else:
-                        self._fill_all_fields(latest)
-                        q_lower = latest.lower()
-                        is_num_q = any(w in q_lower for w in [
-                            "how many", "number", "in days", "in months",
-                            "in years", "in lpa", "in lakhs"])
-                        typed_ans = answer_question(latest, numeric_only=is_num_q) if is_num_q else ans
-                        self._type_contenteditable(typed_ans)
-                    time.sleep(0.3)
-                    self._click_save_send()
+                    q_text = qs[-1].text.strip() if qs else ""
+                    log.info(f"  Q: {q_text}")
+                    ans = answer_question(q_text)
+
+                    # Try in order: radio label → chip → text input → contenteditable
+                    if not self._click_radio_label(ans):
+                        if not self._click_chip_fast(ans):
+                            self._fill_visible_inputs(q_text)
+                            self._type_chatbot_input(q_text, ans)
+                    time.sleep(0.15)
+                    self._force_click_save()
                 else:
-                    filled = self._fill_all_fields("")
-                    submitted = self._click_any_submit()
+                    # Non-chatbot popup (regular form)
+                    filled = self._fill_visible_inputs("")
+                    submitted = self._click_submit()
                     if not filled and not submitted:
-                        stale_rounds += 1
-                        if stale_rounds >= 3:
+                        stale += 1
+                        if stale >= 2:
                             break
                     else:
-                        stale_rounds = 0
-                        time.sleep(0.5)
-            except Exception as e:
-                log.debug(f"Popup step error: {e}")
+                        stale = 0
+            except Exception:
                 continue
 
-    # ── CHATBOT RADIO / CHECKBOX / LABEL SELECTOR ──────────────────────────
-    def _chatbot_select_option(self, answer):
-        """Handle Naukri chatbot radio buttons, checkboxes, and clickable labels."""
+    # ── CLICK RADIO LABEL (Naukri chatbot ssrc labels) ─────────────────────
+    def _click_radio_label(self, answer):
         al = answer.lower().strip()
-
-        # 1. Radio buttons inside chatbot (ssrc__label, singleselect)
-        best_label, best_score = None, 0
-        for lbl in self._els(
-                "label.ssrc__label, "
-                "div.singleselect-radiobutton label, "
-                "div.singleselect-radiobutton-container label, "
-                "div.chatbot_DrawerContentWrapper label"):
+        labels = self._els("label.ssrc__label")
+        if not labels:
+            labels = self._els("div.singleselect-radiobutton-container label")
+        if not labels:
+            labels = self._els("div.chatbot_DrawerContentWrapper label")
+        best, best_s = None, 0
+        for lbl in labels:
             try:
-                if not lbl.is_displayed():
+                lt = lbl.text.strip().lower()
+                if not lt or not lbl.is_displayed():
                     continue
-                lt = lbl.text.strip()
-                ll = lt.lower()
-                if not ll:
-                    continue
-                # Exact match
-                if al == ll:
-                    best_label, best_score = lbl, 100
+                if al == lt:
+                    best, best_s = lbl, 100
                     break
-                # Answer contained in label or vice versa
-                if al in ll:
+                if al in lt:
                     s = 90
-                elif ll in al:
+                elif lt in al:
                     s = 80
                 else:
-                    # Word overlap
-                    s = len(set(al.split()) & set(ll.split())) * 15
-                if s > best_score:
-                    best_label, best_score = lbl, s
+                    s = len(set(al.split()) & set(lt.split())) * 20
+                if s > best_s:
+                    best, best_s = lbl, s
             except Exception:
                 pass
-        if best_label and best_score >= 15:
-            self._scroll(best_label)
-            self._js("arguments[0].click();", best_label)
-            log.info(f"  Radio/label clicked: {best_label.text.strip()} (score:{best_score})")
+        if best and best_s >= 20:
+            self._js("arguments[0].click();", best)
+            log.info(f"  Radio: {best.text.strip()}")
             return True
+        return False
 
-        # 2. Chatbot checkboxes (multiselect)
-        for cb in self._els(
-                "div.chatbot_DrawerContentWrapper input[type='checkbox'], "
-                "div.multiselect-checkbox input[type='checkbox']"):
+    # ── CLICK CHIP (fast, minimal selectors) ───────────────────────────────
+    def _click_chip_fast(self, answer):
+        al = answer.lower()
+        for c in self._els("div.chip, button.chip, span.chip, div.chipMsg button"):
             try:
-                if not cb.is_selected():
-                    cid = cb.get_attribute("id") or ""
-                    # Click label if available, else click input directly
-                    clicked = False
-                    if cid:
-                        for lbl in self._els(f"label[for='{cid}']"):
-                            if lbl.is_displayed():
-                                self._scroll(lbl)
-                                self._js("arguments[0].click();", lbl)
-                                clicked = True
-                                break
-                    if not clicked:
-                        self._scroll(cb)
-                        self._js("arguments[0].click();", cb)
-                    log.info(f"  Chatbot checkbox checked: {cid}")
+                ct = c.text.strip().lower()
+                if ct and c.is_displayed() and (al in ct or ct in al):
+                    self._js("arguments[0].click();", c)
+                    log.info(f"  Chip: {c.text.strip()}")
                     return True
             except Exception:
                 pass
-
-        return False
-
-    def _find_chatbot(self):
-        for s in ["div.chatbot_DrawerContentWrapper", "div.chatbot_MessageContainer",
-                   "div[class*='chatbot_Drawer']", "div[class*='chatbot']",
-                   "div[class*='Chatbot']", "div[class*='bot-container']",
-                   "div[class*='ChatDrawer']", "div[class*='chatDrawer']"]:
+        # Fallback: click first visible chip
+        for c in self._els("div.chip, button.chip"):
             try:
-                e = self._el(s)
-                if e.is_displayed():
-                    return e
+                if c.is_displayed() and c.text.strip():
+                    self._js("arguments[0].click();", c)
+                    return True
             except Exception:
                 pass
-        return None
+        return False
 
-    # ── CONTENTEDITABLE INPUT ──────────────────────────────────────────────
-    def _type_contenteditable(self, answer):
+    # ── TYPE INTO CHATBOT CONTENTEDITABLE ──────────────────────────────────
+    def _type_chatbot_input(self, question, answer):
+        q_lower = question.lower()
+        is_num = any(w in q_lower for w in ["how many", "number", "in days", "in months", "in years", "in lpa", "in lakhs"])
+        typed_ans = answer_question(question, numeric_only=True) if is_num else answer
         for s in ["div.textArea[contenteditable='true']", "div[contenteditable='true'].textArea",
                    "div.chatbot_InputContainer div[contenteditable]"]:
             try:
                 inp = self._el(s)
                 if inp.is_displayed():
-                    self._scroll(inp)
-                    inp.click()
                     self._js(
                         "var e=arguments[0];e.innerText=arguments[1];"
                         "e.dispatchEvent(new Event('input',{bubbles:true}));"
                         "e.dispatchEvent(new Event('change',{bubbles:true}));"
                         "e.dispatchEvent(new KeyboardEvent('keydown',{key:'a',bubbles:true}));"
                         "e.dispatchEvent(new KeyboardEvent('keyup',{key:'a',bubbles:true}));",
-                        inp, answer)
-                    log.info(f"  Typed: {answer}")
+                        inp, typed_ans)
+                    log.info(f"  Typed: {typed_ans}")
                     return True
             except Exception:
                 pass
         return False
 
-    # ── SAVE / SEND BUTTON ─────────────────────────────────────────────────
-    def _click_save_send(self):
-        # Force-enable all send buttons
-        safe(lambda: self._js(
-            "document.querySelectorAll('.send.disabled,.send').forEach(e=>{e.classList.remove('disabled');e.style.pointerEvents='auto';e.style.opacity='1'});"
-            "document.querySelectorAll('.sendMsg').forEach(e=>{e.style.pointerEvents='auto';e.style.opacity='1'});"
-        ))
-        for s in ["div.sendMsg", "div.send div.sendMsg"]:
-            try:
-                b = self._el(s)
-                if b.is_displayed():
-                    self._scroll(b)
-                    self._js("arguments[0].click();", b)
-                    return True
-            except Exception:
-                pass
+    # ── FORCE CLICK SAVE/SEND (remove disabled, click) ────────────────────
+    def _force_click_save(self):
+        try:
+            self._js(
+                "document.querySelectorAll('.send.disabled,.send').forEach(e=>{"
+                "e.classList.remove('disabled');e.style.pointerEvents='auto'});"
+                "var b=document.querySelector('div.sendMsg');"
+                "if(b)b.click();"
+            )
+            return True
+        except Exception:
+            pass
         for x in ["//div[text()='Save']", "//div[text()='Send']", "//button[text()='Save']",
                    "//button[text()='Send']", "//button[text()='Submit']"]:
             try:
                 b = self._xel(x)
                 if b.is_displayed():
-                    self._scroll(b)
                     self._js("arguments[0].click();", b)
                     return True
             except Exception:
                 pass
         return False
 
-    # ── CHIP / OPTION CLICK ────────────────────────────────────────────────
-    def _click_chip(self, answer):
-        al = answer.lower()
-        for s in ["div.chip", "button.chip", "span.chip", "div.option", "button.option",
-                   "li.option", "div.selectable", "div.chipMsg button", "div.footerWrapper button",
-                   "div.footerWrapper div.chip", "div.chatbot_SendMessageContainer button"]:
-            for c in self._els(s):
-                try:
-                    ct = c.text.strip().lower()
-                    if ct and c.is_displayed() and (al in ct or ct in al):
-                        self._scroll(c)
-                        self._click(c)
-                        log.info(f"  Chip: {c.text.strip()}")
-                        return True
-                except Exception:
-                    pass
-        for s in ["div.chip", "button.chip"]:
-            for c in self._els(s):
-                try:
-                    if c.is_displayed() and c.text.strip():
-                        self._scroll(c)
-                        self._click(c)
-                        return True
-                except Exception:
-                    pass
-        return False
-
-    # ══════════════════════════════════════════════════════════════════════
-    #  FILL EVERY FIELD TYPE — instant, scroll into view, JS clicks
-    # ══════════════════════════════════════════════════════════════════════
-    def _fill_all_fields(self, ctx=""):
+    # ── FILL VISIBLE INPUTS (text, number, select, radio, checkbox) ───────
+    def _fill_visible_inputs(self, ctx=""):
         filled = False
 
-        # ── 1. Expand accordions / collapsed sections ──
-        for s in ["div[class*='accordion']", "div[class*='collaps']", "summary",
-                   "div[role='button'][aria-expanded='false']", "button[aria-expanded='false']",
-                   "div.section-header", "div[class*='expand']"]:
-            for el in self._els(s):
-                try:
-                    if el.is_displayed():
-                        self._click(el)
-                except Exception:
-                    pass
-
-        # ── 2. Text / Number / Tel / Email / URL / Textarea ──
-        for inp in self._els(
-                "input[type='text'], input[type='number'], input[type='tel'], "
-                "input[type='email'], input[type='url'], input:not([type]), textarea"):
+        # Text / Number / Tel inputs
+        for inp in self._els("input[type='text'], input[type='number'], input[type='tel'], "
+                              "input[type='email'], input[type='url'], input:not([type]), textarea"):
             try:
                 if not inp.is_displayed():
-                    continue
-                if inp.get_attribute("readonly") or inp.get_attribute("disabled"):
                     continue
                 itype = (inp.get_attribute("type") or "").lower()
                 if itype in ("hidden", "submit", "button", "radio", "checkbox", "file"):
                     continue
-                val = (inp.get_attribute("value") or "").strip()
-                if val:
+                if inp.get_attribute("readonly") or inp.get_attribute("disabled"):
+                    continue
+                if (inp.get_attribute("value") or "").strip():
                     continue
                 label = self._get_label(inp)
-                # Detect if field only accepts numbers
-                is_numeric = itype in ("number", "tel") or inp.get_attribute("pattern") in ("[0-9]*", "\\d*", "\\d+")
+                is_numeric = itype in ("number", "tel")
                 ans = answer_question(label or ctx, numeric_only=is_numeric)
-                self._scroll(inp)
                 inp.click()
                 inp.clear()
                 inp.send_keys(ans)
-                # Verify: if field rejected text (value empty after typing), retry with numeric
-                time.sleep(0.1)
-                actual = (inp.get_attribute("value") or "").strip()
-                if not actual and not is_numeric:
-                    ans = answer_question(label or ctx, numeric_only=True)
+                time.sleep(0.15)
+                # If field rejected text, retry numeric
+                if not (inp.get_attribute("value") or "").strip() and not is_numeric:
                     inp.clear()
-                    inp.send_keys(ans)
-                # Handle autocomplete dropdown
-                time.sleep(0.3)
+                    inp.send_keys(answer_question(label or ctx, numeric_only=True))
+                # Pick autocomplete if any
+                time.sleep(0.2)
                 self._pick_autocomplete(inp, ans)
                 filled = True
                 log.info(f"  Input '{label}' → {ans}")
             except Exception:
                 pass
 
-        # ── 3. Native <select> ──
+        # Native <select>
         for sel_el in self._els("select"):
             try:
                 if not sel_el.is_displayed():
@@ -524,78 +430,35 @@ class NaukriApplier:
                     continue
                 label = self._get_label(sel_el)
                 ans = answer_question(label or ctx).lower()
-                self._scroll(sel_el)
                 best_opt, best_score = None, 0
-                ans_words = set(ans.split())
                 for opt in select.options:
                     ot = opt.text.strip().lower()
                     if ot in skip:
                         continue
-                    # Exact match
                     if ans == ot:
                         best_opt, best_score = opt, 100
                         break
-                    # Answer contained in option or vice versa (full phrase)
-                    if len(ans) > 2 and ans in ot:
-                        score = 90
-                        if score > best_score:
-                            best_opt, best_score = opt, score
-                    elif len(ot) > 2 and ot in ans:
-                        score = 80
-                        if score > best_score:
-                            best_opt, best_score = opt, score
+                    if ans in ot:
+                        s = 90
+                    elif ot in ans:
+                        s = 80
                     else:
-                        # Word overlap scoring
-                        ot_words = set(ot.split())
-                        common = ans_words & ot_words
-                        if common:
-                            score = len(common) * 10
-                            if score > best_score:
-                                best_opt, best_score = opt, score
+                        s = len(set(ans.split()) & set(ot.split())) * 10
+                    if s > best_score:
+                        best_opt, best_score = opt, s
                 if best_opt:
                     select.select_by_visible_text(best_opt.text)
                     filled = True
-                    log.info(f"  Select '{label}' → {best_opt.text.strip()} (score:{best_score})")
+                    log.info(f"  Select '{label}' → {best_opt.text.strip()}")
                 else:
-                    # Last resort: pick last option (usually highest value)
                     valid = [o for o in select.options if (o.get_attribute("value") or "").strip() not in ("", "0", "-1")]
                     if valid:
                         select.select_by_visible_text(valid[-1].text)
                         filled = True
-                        log.info(f"  Select '{label}' → {valid[-1].text.strip()} (fallback last)")
             except Exception:
                 pass
 
-        # ── 4. Custom div dropdowns ──
-        for dd in self._els(
-                "div.customSelect, div.dropdownMainContainer, div[class*='dropdown'], "
-                "div[class*='Dropdown'], div[class*='select-wrapper'], div[class*='SelectBox']"):
-            try:
-                if not dd.is_displayed():
-                    continue
-                dt = dd.text.strip().lower()
-                if dt and dt not in ("select", "choose", "--select--", ""):
-                    continue
-                label = self._get_label(dd)
-                ans = answer_question(label or ctx).lower()
-                self._scroll(dd)
-                self._click(dd)
-                time.sleep(0.15)
-                for opt in self._els("li, div.optionItem, div[class*='option'], div[class*='Option'], ul li"):
-                    try:
-                        ot = opt.text.strip().lower()
-                        if ot and opt.is_displayed() and (ans in ot or ot in ans):
-                            self._scroll(opt)
-                            self._click(opt)
-                            filled = True
-                            log.info(f"  Dropdown '{label}' → {opt.text.strip()}")
-                            break
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-
-        # ── 5. Radio buttons ──
+        # Radio buttons
         groups = {}
         for rb in self._els("input[type='radio']"):
             try:
@@ -604,169 +467,56 @@ class NaukriApplier:
                     groups.setdefault(n, []).append(rb)
             except Exception:
                 pass
-        for n, radios in groups.items():
+        for name, radios in groups.items():
             try:
-                if any(safe(lambda r=r: r.is_selected()) for r in radios):
+                if any(r.is_selected() for r in radios):
                     continue
                 label = self._get_label(radios[0])
                 ans = answer_question(label or ctx).lower()
                 clicked = False
                 for r in radios:
-                    try:
-                        rl = self._get_label(r).lower()
-                        if ans in rl or rl in ans or "yes" in rl:
-                            self._scroll(r)
-                            self._js("arguments[0].click();", r)
-                            clicked = True
-                            filled = True
-                            log.info(f"  Radio '{label}' → {rl}")
-                            break
-                    except Exception:
-                        pass
-                if not clicked and radios:
-                    try:
-                        self._scroll(radios[0])
-                        self._js("arguments[0].click();", radios[0])
+                    rl = self._get_label(r).lower()
+                    if ans in rl or rl in ans or "yes" in rl:
+                        self._js("arguments[0].click();", r)
+                        clicked = True
                         filled = True
-                    except Exception:
-                        pass
+                        log.info(f"  Radio '{label}' → {rl}")
+                        break
+                if not clicked and radios:
+                    self._js("arguments[0].click();", radios[0])
+                    filled = True
             except Exception:
                 pass
 
-        # ── 6. ALL checkboxes — native + custom styled ──
-        # 6a. Native checkboxes (visible)
+        # Checkboxes — check all unchecked
         for cb in self._els("input[type='checkbox']"):
             try:
                 if not cb.is_selected():
                     if cb.is_displayed():
-                        self._scroll(cb)
                         self._js("arguments[0].click();", cb)
-                        filled = True
-                        log.info("  Checkbox checked (native visible)")
                     else:
-                        # Hidden native checkbox — click its label or force check via JS
                         self._js("arguments[0].checked=true;arguments[0].dispatchEvent(new Event('change',{bubbles:true}));", cb)
-                        # Also click the associated label
                         cid = cb.get_attribute("id")
                         if cid:
                             for lbl in self._els(f"label[for='{cid}']"):
-                                try:
-                                    if lbl.is_displayed():
-                                        self._scroll(lbl)
-                                        self._js("arguments[0].click();", lbl)
-                                except Exception:
-                                    pass
-                        # Click parent label if wrapping
-                        try:
-                            parent_label = cb.find_element(By.XPATH, "ancestor::label")
-                            if parent_label.is_displayed():
-                                self._scroll(parent_label)
-                                self._js("arguments[0].click();", parent_label)
-                        except Exception:
-                            pass
-                        filled = True
-                        log.info("  Checkbox checked (native hidden)")
-            except Exception:
-                pass
-
-        # 6b. Custom styled checkboxes (Naukri uses spans/divs as checkboxes)
-        for sel in [
-            "span.checkmark", "span.customCheckbox", "span[class*='check']",
-            "div.checkmark", "div.customCheckbox", "div[class*='checkbox']",
-            "label.checkbox", "label[class*='check']",
-            "div[class*='Checkbox']", "span[class*='Checkbox']",
-            "div[role='checkbox']", "span[role='checkbox']",
-            "div.check-box", "span.check-box",
-        ]:
-            for el in self._els(sel):
-                try:
-                    if not el.is_displayed():
-                        continue
-                    ac = (el.get_attribute("aria-checked") or "").lower()
-                    cls = (el.get_attribute("class") or "").lower()
-                    # Skip if already checked
-                    if ac == "true" or "checked" in cls or "selected" in cls or "active" in cls:
-                        continue
-                    self._scroll(el)
-                    self._js("arguments[0].click();", el)
-                    filled = True
-                    log.info(f"  Custom checkbox checked: {sel}")
-                except Exception:
-                    pass
-
-        # 6c. Click any unchecked label that wraps a checkbox-like element
-        for lbl in self._els("label"):
-            try:
-                if not lbl.is_displayed():
-                    continue
-                inner_cb = lbl.find_elements(By.CSS_SELECTOR, "input[type='checkbox']")
-                if inner_cb and not inner_cb[0].is_selected():
-                    self._scroll(lbl)
-                    self._js("arguments[0].click();", lbl)
-                    filled = True
-                    log.info("  Label-wrapped checkbox checked")
-            except Exception:
-                pass
-
-        # ── 7. Toggle switches ──
-        for tog in self._els("div[class*='toggle'], div[class*='switch'], label.switch, span[class*='toggle']"):
-            try:
-                if tog.is_displayed():
-                    ac = tog.get_attribute("aria-checked") or ""
-                    if ac == "false" or not ac:
-                        self._scroll(tog)
-                        self._js("arguments[0].click();", tog)
-                        filled = True
-            except Exception:
-                pass
-
-        # ── 8. Date inputs ──
-        for di in self._els("input[type='date'], input[type='month']"):
-            try:
-                if di.is_displayed() and not (di.get_attribute("value") or "").strip():
-                    self._scroll(di)
-                    di.send_keys("2025-01-01")
-                    filled = True
-            except Exception:
-                pass
-
-        # ── 9. Contenteditable divs ──
-        for ce in self._els("div[contenteditable='true']"):
-            try:
-                if ce.is_displayed() and not (ce.text or "").strip():
-                    label = self._get_label(ce)
-                    ans = answer_question(label or ctx)
-                    self._scroll(ce)
-                    self._js(
-                        "var e=arguments[0];e.innerText=arguments[1];"
-                        "e.dispatchEvent(new Event('input',{bubbles:true}));", ce, ans)
-                    filled = True
-            except Exception:
-                pass
-
-        # ── 10. Range / slider inputs ──
-        for sl in self._els("input[type='range']"):
-            try:
-                if sl.is_displayed():
-                    self._scroll(sl)
-                    mx = sl.get_attribute("max") or "100"
-                    self._js(f"arguments[0].value={int(mx)//2};arguments[0].dispatchEvent(new Event('change'));", sl)
+                                if lbl.is_displayed():
+                                    self._js("arguments[0].click();", lbl)
+                                    break
                     filled = True
             except Exception:
                 pass
 
         return filled
 
-    def _click_any_submit(self):
-        for x in ["//button[contains(text(),'Submit')]", "//button[contains(text(),'submit')]",
-                   "//button[contains(text(),'Next')]", "//button[contains(text(),'Apply')]",
-                   "//button[contains(text(),'Save')]", "//button[contains(text(),'Continue')]",
-                   "//button[contains(text(),'Done')]", "//button[contains(text(),'Confirm')]",
+    # ── SUBMIT BUTTON ──────────────────────────────────────────────────────
+    def _click_submit(self):
+        for x in ["//button[contains(text(),'Submit')]", "//button[contains(text(),'Next')]",
+                   "//button[contains(text(),'Apply')]", "//button[contains(text(),'Save')]",
+                   "//button[contains(text(),'Continue')]", "//button[contains(text(),'Done')]",
                    "//input[@type='submit']", "//button[@type='submit']"]:
             try:
                 b = self._xel(x)
                 if b.is_displayed() and b.is_enabled():
-                    self._scroll(b)
                     self._js("arguments[0].click();", b)
                     return True
             except Exception:
@@ -807,19 +557,14 @@ class NaukriApplier:
         return ""
 
     def _pick_autocomplete(self, inp, answer):
-        """After typing, check if autocomplete dropdown appeared and pick best match."""
         al = answer.lower()
-        for sel in [
-            "ul[role='listbox'] li", "div[role='listbox'] div[role='option']",
-            "ul.typeahead li", "div.suggestions li", "div[class*='suggest'] li",
-            "div[class*='autocomplete'] li", "div[class*='Autocomplete'] li",
-            "ul.ui-autocomplete li", "div.dropdown-menu li",
-            "div[class*='typeahead'] li",
-        ]:
+        for sel in ["ul[role='listbox'] li", "div[role='listbox'] div[role='option']",
+                     "ul.typeahead li", "div.suggestions li", "div[class*='suggest'] li",
+                     "div[class*='autocomplete'] li", "ul.ui-autocomplete li"]:
             options = self._els(sel)
             if not options:
                 continue
-            best, best_score = None, 0
+            best, best_s = None, 0
             for opt in options:
                 try:
                     if not opt.is_displayed():
@@ -828,35 +573,29 @@ class NaukriApplier:
                     if not ot:
                         continue
                     if al == ot:
-                        best, best_score = opt, 100
+                        best = opt
                         break
-                    if al in ot:
-                        s = 90
-                        if s > best_score:
-                            best, best_score = opt, s
-                    elif ot in al:
-                        s = 80
-                        if s > best_score:
-                            best, best_score = opt, s
+                    if al in ot and 90 > best_s:
+                        best, best_s = opt, 90
+                    elif ot in al and 80 > best_s:
+                        best, best_s = opt, 80
                 except Exception:
                     pass
             if best:
-                self._scroll(best)
-                self._click(best)
+                self._js("arguments[0].click();", best)
                 return True
+            # Click first visible option
             for opt in options:
                 try:
                     if opt.is_displayed() and opt.text.strip():
-                        self._scroll(opt)
-                        self._click(opt)
+                        self._js("arguments[0].click();", opt)
                         return True
                 except Exception:
                     pass
         try:
             inp.send_keys(Keys.ARROW_DOWN)
-            time.sleep(0.1)
+            time.sleep(0.05)
             inp.send_keys(Keys.ENTER)
-            return True
         except Exception:
             pass
         return False

@@ -5,7 +5,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import Select
 from selenium.common.exceptions import *
 from browser_utils import create_driver, wait_and_click, wait_for
-from resume_data import answer_question, RESUME
+from resume_data import answer_question, RESUME, is_relevant_job
 
 log = logging.getLogger(__name__)
 
@@ -200,6 +200,10 @@ class NaukriApplier:
             if "applied" in btn.text.strip().lower():
                 self.skipped += 1
                 return
+            if not is_relevant_job(title):
+                log.info(f"Skipped (not AI/ML): {title}")
+                self.skipped += 1
+                return
             self._click(btn)
             time.sleep(0.3)
             self._handle_all_popups()
@@ -256,7 +260,11 @@ class NaukriApplier:
                     # Try all methods: chip → fields → contenteditable
                     if not self._click_chip(ans):
                         self._fill_all_fields(latest)
-                        self._type_contenteditable(ans)
+                        # For contenteditable, check if question asks for number
+                        q_lower = latest.lower()
+                        is_num_q = any(w in q_lower for w in ["how many", "number", "in days", "in months", "in years", "in lpa", "in lakhs"])
+                        typed_ans = answer_question(latest, numeric_only=is_num_q) if is_num_q else ans
+                        self._type_contenteditable(typed_ans)
                     self._click_save_send()
                 else:
                     self._fill_all_fields("")
@@ -329,7 +337,8 @@ class NaukriApplier:
     # ── CHIP / OPTION CLICK ────────────────────────────────────────────────
     def _click_chip(self, answer):
         al = answer.lower()
-        for s in ["div.chip", "button.chip", "span.chip", "div.option", "button.option",
+        for s in ["label.ssrc__label", "div.ssrc__radio-btn-container label",
+                   "div.chip", "button.chip", "span.chip", "div.option", "button.option",
                    "li.option", "div.selectable", "div.chipMsg button", "div.footerWrapper button",
                    "div.footerWrapper div.chip", "div.chatbot_SendMessageContainer button"]:
             for c in self._els(s):
@@ -386,11 +395,20 @@ class NaukriApplier:
                 if val:
                     continue
                 label = self._get_label(inp)
-                ans = answer_question(label or ctx)
+                # Detect if field only accepts numbers
+                is_numeric = itype in ("number", "tel") or inp.get_attribute("pattern") in ("[0-9]*", "\\d*", "\\d+")
+                ans = answer_question(label or ctx, numeric_only=is_numeric)
                 self._scroll(inp)
                 inp.click()
                 inp.clear()
                 inp.send_keys(ans)
+                # Verify: if field rejected text (value empty after typing), retry with numeric
+                time.sleep(0.1)
+                actual = (inp.get_attribute("value") or "").strip()
+                if not actual and not is_numeric:
+                    ans = answer_question(label or ctx, numeric_only=True)
+                    inp.clear()
+                    inp.send_keys(ans)
                 filled = True
                 log.info(f"  Input '{label}' → {ans}")
             except Exception:
@@ -410,24 +428,44 @@ class NaukriApplier:
                 label = self._get_label(sel_el)
                 ans = answer_question(label or ctx).lower()
                 self._scroll(sel_el)
-                matched = False
+                best_opt, best_score = None, 0
+                ans_words = set(ans.split())
                 for opt in select.options:
                     ot = opt.text.strip().lower()
                     if ot in skip:
                         continue
-                    if ans in ot or ot in ans:
-                        select.select_by_visible_text(opt.text)
-                        matched = True
-                        filled = True
-                        log.info(f"  Select '{label}' → {opt.text.strip()}")
+                    # Exact match
+                    if ans == ot:
+                        best_opt, best_score = opt, 100
                         break
-                if not matched:
-                    for opt in select.options:
-                        v = (opt.get_attribute("value") or "").strip()
-                        if v and v not in ("", "0", "-1"):
-                            select.select_by_visible_text(opt.text)
-                            filled = True
-                            break
+                    # Answer contained in option or vice versa (full phrase)
+                    if len(ans) > 2 and ans in ot:
+                        score = 90
+                        if score > best_score:
+                            best_opt, best_score = opt, score
+                    elif len(ot) > 2 and ot in ans:
+                        score = 80
+                        if score > best_score:
+                            best_opt, best_score = opt, score
+                    else:
+                        # Word overlap scoring
+                        ot_words = set(ot.split())
+                        common = ans_words & ot_words
+                        if common:
+                            score = len(common) * 10
+                            if score > best_score:
+                                best_opt, best_score = opt, score
+                if best_opt:
+                    select.select_by_visible_text(best_opt.text)
+                    filled = True
+                    log.info(f"  Select '{label}' → {best_opt.text.strip()} (score:{best_score})")
+                else:
+                    # Last resort: pick last option (usually highest value)
+                    valid = [o for o in select.options if (o.get_attribute("value") or "").strip() not in ("", "0", "-1")]
+                    if valid:
+                        select.select_by_visible_text(valid[-1].text)
+                        filled = True
+                        log.info(f"  Select '{label}' → {valid[-1].text.strip()} (fallback last)")
             except Exception:
                 pass
 

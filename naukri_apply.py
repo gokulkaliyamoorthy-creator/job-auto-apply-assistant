@@ -176,7 +176,7 @@ class NaukriApplier:
                         try:
                             if len(self.driver.window_handles) > 1:
                                 self.driver.close()
-                                self.driver.switch_to.window(self.driver.window_handles[0])
+                            self.driver.switch_to.window(self.driver.window_handles[0])
                         except Exception:
                             pass
                 page += 1
@@ -214,14 +214,16 @@ class NaukriApplier:
             self.failed += 1
         finally:
             try:
-                d.close()
+                if d.current_window_handle != mw:
+                    d.close()
             except Exception:
                 pass
             try:
                 d.switch_to.window(mw)
             except Exception:
                 try:
-                    d.switch_to.window(d.window_handles[0])
+                    if d.window_handles:
+                        d.switch_to.window(d.window_handles[0])
                 except Exception:
                     pass
 

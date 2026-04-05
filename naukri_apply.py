@@ -246,18 +246,15 @@ class NaukriApplier:
     #  POPUP HANDLER — chatbot + form, never stops
     # ══════════════════════════════════════════════════════════════════════
     def _handle_all_popups(self):
-        # Wait for popup/chatbot to appear
         time.sleep(1.0)
         prev_q = 0
         stale_rounds = 0
         for _ in range(40):
-            time.sleep(0.4)
+            time.sleep(0.5)
             try:
                 if self._find_chatbot():
-                    stale_rounds = 0
                     qs = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
                     if len(qs) <= prev_q:
-                        # No new question yet — try send/save in case answer was typed but not sent
                         self._click_save_send()
                         time.sleep(0.6)
                         qs = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
@@ -266,16 +263,24 @@ class NaukriApplier:
                             if stale_rounds >= 3:
                                 break
                             continue
+                    stale_rounds = 0
                     prev_q = len(qs)
                     latest = qs[-1].text.strip() if qs else ""
                     log.info(f"  Q: {latest}")
                     ans = answer_question(latest)
-                    # Try all methods: chip → fields → contenteditable
-                    if not self._click_chip(ans):
+                    # 1. Try chatbot-specific radio/checkbox/label clicks
+                    if self._chatbot_select_option(ans):
+                        log.info(f"  Selected option for: {latest}")
+                    # 2. Try chips
+                    elif self._click_chip(ans):
+                        pass
+                    # 3. Try filling form fields inside chatbot
+                    else:
                         self._fill_all_fields(latest)
-                        # For contenteditable, check if question asks for number
                         q_lower = latest.lower()
-                        is_num_q = any(w in q_lower for w in ["how many", "number", "in days", "in months", "in years", "in lpa", "in lakhs"])
+                        is_num_q = any(w in q_lower for w in [
+                            "how many", "number", "in days", "in months",
+                            "in years", "in lpa", "in lakhs"])
                         typed_ans = answer_question(latest, numeric_only=is_num_q) if is_num_q else ans
                         self._type_contenteditable(typed_ans)
                     time.sleep(0.3)
@@ -293,6 +298,73 @@ class NaukriApplier:
             except Exception as e:
                 log.debug(f"Popup step error: {e}")
                 continue
+
+    # ── CHATBOT RADIO / CHECKBOX / LABEL SELECTOR ──────────────────────────
+    def _chatbot_select_option(self, answer):
+        """Handle Naukri chatbot radio buttons, checkboxes, and clickable labels."""
+        al = answer.lower().strip()
+
+        # 1. Radio buttons inside chatbot (ssrc__label, singleselect)
+        best_label, best_score = None, 0
+        for lbl in self._els(
+                "label.ssrc__label, "
+                "div.singleselect-radiobutton label, "
+                "div.singleselect-radiobutton-container label, "
+                "div.chatbot_DrawerContentWrapper label"):
+            try:
+                if not lbl.is_displayed():
+                    continue
+                lt = lbl.text.strip()
+                ll = lt.lower()
+                if not ll:
+                    continue
+                # Exact match
+                if al == ll:
+                    best_label, best_score = lbl, 100
+                    break
+                # Answer contained in label or vice versa
+                if al in ll:
+                    s = 90
+                elif ll in al:
+                    s = 80
+                else:
+                    # Word overlap
+                    s = len(set(al.split()) & set(ll.split())) * 15
+                if s > best_score:
+                    best_label, best_score = lbl, s
+            except Exception:
+                pass
+        if best_label and best_score >= 15:
+            self._scroll(best_label)
+            self._js("arguments[0].click();", best_label)
+            log.info(f"  Radio/label clicked: {best_label.text.strip()} (score:{best_score})")
+            return True
+
+        # 2. Chatbot checkboxes (multiselect)
+        for cb in self._els(
+                "div.chatbot_DrawerContentWrapper input[type='checkbox'], "
+                "div.multiselect-checkbox input[type='checkbox']"):
+            try:
+                if not cb.is_selected():
+                    cid = cb.get_attribute("id") or ""
+                    # Click label if available, else click input directly
+                    clicked = False
+                    if cid:
+                        for lbl in self._els(f"label[for='{cid}']"):
+                            if lbl.is_displayed():
+                                self._scroll(lbl)
+                                self._js("arguments[0].click();", lbl)
+                                clicked = True
+                                break
+                    if not clicked:
+                        self._scroll(cb)
+                        self._js("arguments[0].click();", cb)
+                    log.info(f"  Chatbot checkbox checked: {cid}")
+                    return True
+            except Exception:
+                pass
+
+        return False
 
     def _find_chatbot(self):
         for s in ["div.chatbot_DrawerContentWrapper", "div.chatbot_MessageContainer",

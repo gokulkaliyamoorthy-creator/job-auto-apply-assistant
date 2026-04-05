@@ -181,6 +181,24 @@ class LinkedInApplier:
             self.driver.get(url)
             time.sleep(1.5)
 
+            # Scroll down the job list to load ALL cards (LinkedIn lazy-loads)
+            list_container = None
+            for sel in ["div.jobs-search-results-list", "div.scaffold-layout__list",
+                         "ul.scaffold-layout__list-container"]:
+                try:
+                    el = self._el(sel)
+                    if el.is_displayed():
+                        list_container = el
+                        break
+                except Exception:
+                    pass
+
+            if list_container:
+                for _ in range(8):
+                    self._js("arguments[0].scrollTop = arguments[0].scrollHeight;", list_container)
+                    time.sleep(0.3)
+
+            # Collect all cards after scrolling
             cards = self._els("div.job-card-container, li.jobs-search-results__list-item, "
                               "div.job-card-list, li.ember-view.jobs-search-results__list-item")
             if not cards:
@@ -190,11 +208,15 @@ class LinkedInApplier:
 
             log.info(f"'{keywords}' in '{location}' page {page + 1}: {len(cards)} jobs")
 
+            # Go through every card one by one
             for i, card in enumerate(cards):
                 if self.applied >= self.max_apps:
                     return len(cards)
                 try:
-                    # Get ALL text from card to check relevance
+                    # Scroll card into view
+                    self._scroll(card)
+                    time.sleep(0.1)
+
                     card_text = ""
                     try:
                         card_text = card.text or ""
@@ -202,15 +224,15 @@ class LinkedInApplier:
                         pass
                     card_title = self._get_card_title(card)
 
-                    # Check relevance using full card text OR title
+                    # Check relevance
                     if not is_relevant_job(card_title) and not is_relevant_job(card_text):
-                        log.info(f"Skipped card (not AI): {card_title or card_text[:60]}")
+                        log.info(f"Skipped (not AI): {card_title or card_text[:60]}")
                         self.skipped += 1
                         continue
 
-                    self._scroll(card)
+                    # Click card to load detail panel
                     self._click(card)
-                    time.sleep(0.5)
+                    time.sleep(0.8)
                     self._try_easy_apply(card_title)
                 except Exception as e:
                     log.warning(f"Card {i} error: {e}")

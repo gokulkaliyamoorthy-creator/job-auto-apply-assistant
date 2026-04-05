@@ -16,7 +16,7 @@ RESUME = {
     "education": "B.E. Computer Science and Engineering",
     "college": "Sri Sairam Engineering College, Chennai",
     "graduation_year": "2017",
-    "notice_period": "2 Months",
+    "notice_period": "2 months",
     "notice_period_days": "60",
     "current_ctc": "30",
     "current_ctc_lpa": "30 LPA",
@@ -133,7 +133,7 @@ _NO_KEYWORDS = [
 ]
 
 
-def answer_question(question, numeric_only=False):
+def answer_question(question):
     if not question:
         return RESUME["total_experience"]
     q = question.lower().strip()
@@ -141,175 +141,38 @@ def answer_question(question, numeric_only=False):
     # ── 1. Direct mapping match (order matters!) ──
     for keywords, value in _QA_MAP:
         if any(k in q for k in keywords):
-            if numeric_only:
-                return _to_numeric(value, q)
             return value
 
     # ── 2. Yes/No intelligence ──
-    if not numeric_only:
-        for k in _YES_KEYWORDS:
-            if k in q:
-                return "Yes"
-        for k in _NO_KEYWORDS:
-            if k in q:
-                return "No"
+    for k in _YES_KEYWORDS:
+        if k in q:
+            return "Yes"
+    for k in _NO_KEYWORDS:
+        if k in q:
+            return "No"
 
     # ── 3. Smart fallback for numeric questions ──
+    # CTC/salary related — return 30 (current) not 9
     if any(w in q for w in ["salary", "ctc", "compensation", "package", "lpa",
                              "lakhs", "lakh", "annual", "pay", "remuneration"]):
         if any(w in q for w in ["expect", "desired", "looking for"]):
             return RESUME["expected_ctc"]
         return RESUME["current_ctc"]
 
+    # Experience related
     if any(w in q for w in ["how many", "number of", "count", "years", "months", "experience"]):
         if any(w in q for w in ["ai", "ml", "genai", "generative", "deep learning",
                                  "nlp", "machine learning", "data science"]):
             return RESUME["relevant_experience"]
         return RESUME["total_experience"]
 
+    # Notice related
     if any(w in q for w in ["notice", "join", "available", "start"]):
-        if numeric_only:
-            return RESUME["notice_period_days"]
         return RESUME["notice_period"]
 
+    # Location related
     if any(w in q for w in ["location", "city", "place", "where"]):
         return RESUME["current_city"]
 
     # ── 4. Final fallback ──
     return RESUME["total_experience"]
-
-
-# Convert text answers to numeric when field only accepts numbers
-_NUMERIC_MAP = {
-    "2 months": "60",
-    "2months": "60",
-    "1 month": "30",
-    "3 months": "90",
-    "15 days": "15",
-    "30 days": "30",
-    "60 days": "60",
-    "90 days": "90",
-    "immediate": "0",
-}
-
-
-def _to_numeric(value, question=""):
-    # Already numeric
-    if value.replace(".", "").replace("-", "").isdigit():
-        return value
-    # Known mappings
-    vl = value.lower().strip()
-    if vl in _NUMERIC_MAP:
-        return _NUMERIC_MAP[vl]
-    # Extract first number from value
-    import re
-    nums = re.findall(r'\d+\.?\d*', value)
-    if nums:
-        return nums[0]
-    # Context-based: if question is about notice/days return 60
-    q = question.lower()
-    if any(w in q for w in ["notice", "days", "join"]):
-        return "60"
-    if any(w in q for w in ["ctc", "salary", "package", "lpa"]):
-        return "30"
-    if any(w in q for w in ["experience", "years"]):
-        return "9"
-    return "0"
-
-
-# ══════════════════════════════════════════════════════════════════════
-#  JOB TITLE RELEVANCE FILTER — only apply to AI/ML related roles
-# ══════════════════════════════════════════════════════════════════════
-_RELEVANT_WORDS = {
-    "ai", "ml", "artificial", "intelligence", "machine", "learning",
-    "deep", "generative", "genai", "llm", "nlp", "neural",
-    "data", "science", "scientist", "rag", "prompt", "chatbot",
-    "vision", "tensorflow", "pytorch", "langchain", "mlops",
-    "sagemaker", "bedrock", "openai", "gpt", "bert", "transformer",
-    "analytics", "diffusion", "hugging", "stt", "conversational",
-    "retrieval", "augmented", "computer", "natural", "language",
-    "model", "models", "llms", "prediction", "predictive",
-    "classification", "regression", "clustering", "recommendation",
-    "autonomous", "robotics", "cognitive", "intelligent",
-}
-
-
-# LinkedIn needs full numeric values for input fields
-_LINKEDIN_NUMERIC = {
-    # Notice period
-    "notice_period": "60",
-    "notice_period_days": "60",
-    # CTC in actual numbers (LPA to annual)
-    "current_ctc": "3000000",
-    "current_ctc_lpa": "3000000",
-    "fixed_ctc": "2870000",
-    "variable_ctc": "130000",
-    "expected_ctc": "4000000",
-    "expected_ctc_lpa": "4000000",
-    # Experience
-    "total_experience": "9",
-    "relevant_experience": "5",
-    # Phone
-    "phone": "8489122277",
-    "phone_alt": "8489122277",
-}
-
-
-def answer_question_linkedin(question, numeric_only=False):
-    """LinkedIn-specific: always returns numeric for salary/ctc/notice/experience fields."""
-    if not question:
-        return RESUME["total_experience"]
-    q = question.lower().strip()
-
-    # CTC / Salary — return full numeric (annual)
-    if any(w in q for w in ["expected ctc", "expected salary", "expected annual",
-                             "expected compensation", "desired salary", "desired ctc",
-                             "expectation", "expected package"]):
-        return "4000000"
-    if any(w in q for w in ["current ctc", "current salary", "current annual",
-                             "present salary", "present ctc", "last drawn",
-                             "annual ctc", "yearly salary", "current package",
-                             "present package"]):
-        return "3000000"
-    if any(w in q for w in ["fixed ctc", "fixed salary", "fixed component", "base salary", "base ctc"]):
-        return "2870000"
-    if any(w in q for w in ["variable ctc", "variable salary", "variable component", "bonus", "incentive"]):
-        return "130000"
-    if any(w in q for w in ["ctc", "salary", "compensation", "package", "lpa",
-                             "lakhs", "lakh", "annual income", "remuneration",
-                             "pay", "stipend"]):
-        if any(w in q for w in ["expect", "desired", "looking for"]):
-            return "4000000"
-        return "3000000"
-
-    # Notice period — always days
-    if any(w in q for w in ["notice period", "notice", "joining time",
-                             "when can you join", "earliest joining",
-                             "how soon", "availability to join", "joining date"]):
-        return "60"
-
-    # Experience — years as number
-    if any(w in q for w in ["relevant experience", "ai experience", "ml experience",
-                             "genai experience", "generative ai experience",
-                             "related experience", "experience in ai",
-                             "experience in ml", "experience in gen",
-                             "experience in deep", "experience in nlp",
-                             "experience in machine"]):
-        return "5"
-    if any(w in q for w in ["total experience", "years of experience", "total years",
-                             "overall experience", "how many year", "work experience",
-                             "professional experience", "experience in year",
-                             "total work", "it experience", "experience"]):
-        return "9"
-
-    # Fall through to normal answer for non-numeric fields
-    return answer_question(question, numeric_only=numeric_only)
-
-
-def is_relevant_job(title):
-    if not title:
-        return False
-    import re
-    t = re.sub(r'[^a-z0-9]+', ' ', title.lower()).strip()
-    words = set(t.split())
-    return bool(words & _RELEVANT_WORDS)

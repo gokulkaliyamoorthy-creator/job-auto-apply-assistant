@@ -211,7 +211,7 @@ class NaukriApplier:
                 self.skipped += 1
                 return
             self._click(btn)
-            time.sleep(0.3)
+            time.sleep(1.0)
             self._handle_all_popups()
             self.applied += 1
             log.info(f"[{self.applied}] Applied: {title}")
@@ -246,19 +246,26 @@ class NaukriApplier:
     #  POPUP HANDLER — chatbot + form, never stops
     # ══════════════════════════════════════════════════════════════════════
     def _handle_all_popups(self):
+        # Wait for popup/chatbot to appear
+        time.sleep(1.0)
         prev_q = 0
-        for _ in range(30):
-            time.sleep(0.2)
+        stale_rounds = 0
+        for _ in range(40):
+            time.sleep(0.4)
             try:
                 if self._find_chatbot():
+                    stale_rounds = 0
                     qs = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
                     if len(qs) <= prev_q:
+                        # No new question yet — try send/save in case answer was typed but not sent
                         self._click_save_send()
-                        time.sleep(0.2)
-                        qs2 = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
-                        if len(qs2) <= prev_q:
-                            break
-                        qs = qs2
+                        time.sleep(0.6)
+                        qs = self._els("div.botMsg span, li.botItem div.botMsg span, div.botMsg.msg span")
+                        if len(qs) <= prev_q:
+                            stale_rounds += 1
+                            if stale_rounds >= 3:
+                                break
+                            continue
                     prev_q = len(qs)
                     latest = qs[-1].text.strip() if qs else ""
                     log.info(f"  Q: {latest}")
@@ -271,17 +278,27 @@ class NaukriApplier:
                         is_num_q = any(w in q_lower for w in ["how many", "number", "in days", "in months", "in years", "in lpa", "in lakhs"])
                         typed_ans = answer_question(latest, numeric_only=is_num_q) if is_num_q else ans
                         self._type_contenteditable(typed_ans)
+                    time.sleep(0.3)
                     self._click_save_send()
                 else:
-                    self._fill_all_fields("")
-                    if not self._click_any_submit():
-                        break
+                    filled = self._fill_all_fields("")
+                    submitted = self._click_any_submit()
+                    if not filled and not submitted:
+                        stale_rounds += 1
+                        if stale_rounds >= 3:
+                            break
+                    else:
+                        stale_rounds = 0
+                        time.sleep(0.5)
             except Exception as e:
                 log.debug(f"Popup step error: {e}")
                 continue
 
     def _find_chatbot(self):
-        for s in ["div.chatbot_DrawerContentWrapper", "div.chatbot_MessageContainer", "div[class*='chatbot_Drawer']"]:
+        for s in ["div.chatbot_DrawerContentWrapper", "div.chatbot_MessageContainer",
+                   "div[class*='chatbot_Drawer']", "div[class*='chatbot']",
+                   "div[class*='Chatbot']", "div[class*='bot-container']",
+                   "div[class*='ChatDrawer']", "div[class*='chatDrawer']"]:
             try:
                 e = self._el(s)
                 if e.is_displayed():

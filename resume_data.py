@@ -94,10 +94,10 @@ _QA_MAP = [
     (["relevant experience", "ai experience", "ml experience", "genai experience",
       "generative ai experience", "related experience", "experience in ai",
       "experience in ml", "experience in gen", "experience in deep",
-      "experience in nlp", "experience in machine", "total experience",
-      "years of experience", "total years", "overall experience",
+      "experience in nlp", "experience in machine"], RESUME["relevant_experience"]),
+    (["total experience", "years of experience", "total years", "overall experience",
       "how many year", "work experience", "professional experience",
-      "experience in year", "total work", "it experience"], RESUME["relevant_experience"]),
+      "experience in year", "total work", "it experience"], RESUME["total_experience"]),
 
     # ── DOB / PAN ──
     (["date of birth", "dob", "birth date", "born on", "birth"], RESUME["dob_text"]),
@@ -171,7 +171,9 @@ def answer_question(question, numeric_only=False):
         return RESUME["current_ctc"]
 
     if any(w in q for w in ["how many", "number of", "count", "years", "months", "experience"]):
-        return RESUME["relevant_experience"]  # always 5 — all jobs are AI-related
+        if any(w in q for w in ["ai", "ml", "genai", "generative", "deep", "nlp", "machine"]):
+            return RESUME["relevant_experience"]
+        return RESUME["total_experience"]
 
     if any(w in q for w in ["notice", "join", "available", "start"]):
         if numeric_only:
@@ -188,7 +190,7 @@ def answer_question(question, numeric_only=False):
         return RESUME["current_city"]
 
     # ── 4. Final fallback ──
-    return RESUME["relevant_experience"]  # default 5 for all AI jobs
+    return RESUME["relevant_experience"]
 
 
 # Convert text answers to numeric when field only accepts numbers
@@ -308,11 +310,14 @@ def answer_question_linkedin(question, numeric_only=False):
                              "experience in deep", "experience in nlp",
                              "experience in machine"]):
         return "5"
+    if any(w in q for w in ["relevant experience", "ai experience", "ml experience",
+                             "genai", "generative ai", "related experience"]):
+        return "5"
     if any(w in q for w in ["total experience", "years of experience", "total years",
                              "overall experience", "how many year", "work experience",
                              "professional experience", "experience in year",
                              "total work", "it experience", "experience"]):
-        return "5"  # all jobs are AI-related
+        return "9"
 
     # Fall through to normal answer for non-numeric fields
     return answer_question(question, numeric_only=numeric_only)

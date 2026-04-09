@@ -26,7 +26,12 @@ RESUME = {
     "expected_ctc_lpa": "40 LPA",
     "gender": "Male",
     "marital_status": "Single",
-    "dob": "",
+    "dob": "10-05-1996",
+    "dob_dd": "10",
+    "dob_mm": "05",
+    "dob_yyyy": "1996",
+    "dob_text": "10/05/1996",
+    "pan": "BKSPG8388J",
     "languages": "English, Tamil",
     "willing_to_relocate": "Yes",
     "linkedin": "linkedin.com/in/gokul-kaliyamoorthy-952a1a123",
@@ -85,14 +90,18 @@ _QA_MAP = [
     (["hometown", "native", "permanent address", "home town"], RESUME["location"]),
     (["relocat"], "Yes"),
 
-    # ── Experience (AFTER CTC so salary questions don't land here) ──
+    # ── Experience — always return 5 (all jobs are AI-related) ──
     (["relevant experience", "ai experience", "ml experience", "genai experience",
       "generative ai experience", "related experience", "experience in ai",
       "experience in ml", "experience in gen", "experience in deep",
-      "experience in nlp", "experience in machine"], RESUME["relevant_experience"]),
-    (["total experience", "years of experience", "total years", "overall experience",
-      "how many year", "work experience", "professional experience", "experience in year",
-      "total work", "it experience"], RESUME["total_experience"]),
+      "experience in nlp", "experience in machine", "total experience",
+      "years of experience", "total years", "overall experience",
+      "how many year", "work experience", "professional experience",
+      "experience in year", "total work", "it experience"], RESUME["relevant_experience"]),
+
+    # ── DOB / PAN ──
+    (["date of birth", "dob", "birth date", "born on", "birth"], RESUME["dob_text"]),
+    (["pan", "pan number", "pan card", "permanent account"], RESUME["pan"]),
 
     # ── Company / Role ──
     (["current company", "present company", "current employer", "current organization",
@@ -162,21 +171,24 @@ def answer_question(question, numeric_only=False):
         return RESUME["current_ctc"]
 
     if any(w in q for w in ["how many", "number of", "count", "years", "months", "experience"]):
-        if any(w in q for w in ["ai", "ml", "genai", "generative", "deep learning",
-                                 "nlp", "machine learning", "data science"]):
-            return RESUME["relevant_experience"]
-        return RESUME["total_experience"]
+        return RESUME["relevant_experience"]  # always 5 — all jobs are AI-related
 
     if any(w in q for w in ["notice", "join", "available", "start"]):
         if numeric_only:
             return RESUME["notice_period_days"]
         return RESUME["notice_period"]
 
+    if any(w in q for w in ["dob", "birth", "born"]):
+        return RESUME["dob_text"]
+
+    if any(w in q for w in ["pan"]):
+        return RESUME["pan"]
+
     if any(w in q for w in ["location", "city", "place", "where"]):
         return RESUME["current_city"]
 
     # ── 4. Final fallback ──
-    return RESUME["total_experience"]
+    return RESUME["relevant_experience"]  # default 5 for all AI jobs
 
 
 # Convert text answers to numeric when field only accepts numbers
@@ -300,7 +312,7 @@ def answer_question_linkedin(question, numeric_only=False):
                              "overall experience", "how many year", "work experience",
                              "professional experience", "experience in year",
                              "total work", "it experience", "experience"]):
-        return "9"
+        return "5"  # all jobs are AI-related
 
     # Fall through to normal answer for non-numeric fields
     return answer_question(question, numeric_only=numeric_only)

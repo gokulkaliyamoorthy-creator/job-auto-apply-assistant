@@ -234,11 +234,20 @@ class NaukriApplier:
                     pass
 
     def _find_apply_btn(self):
-        for s in ["//button[contains(translate(.,'APLY','aply'),'apply') and not(contains(translate(.,'APLIED','aplied'),'applied'))]",
-                   "//button[contains(@class,'apply')]", "//button[@id='apply-button']", "//button[contains(@id,'apply')]"]:
+        for s in [
+            "//button[@id='apply-button']",
+            "//button[contains(@class,'apply-button')]",
+            "//button[contains(translate(.,'APLY','aply'),'apply') and not(contains(translate(.,'APLIED','aplied'),'applied'))]",
+            "//button[contains(@class,'apply')]",
+            "//button[contains(@id,'apply')]",
+        ]:
             try:
                 b = self.driver.find_element(By.XPATH, s)
                 if b.is_displayed():
+                    txt = b.text.strip().lower()
+                    # Skip external/company site buttons
+                    if any(x in txt for x in ["company site", "external", "apply on"]):
+                        continue
                     return b
             except Exception:
                 pass

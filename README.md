@@ -1,6 +1,6 @@
-# Job Auto-Apply Bot (Naukri + LinkedIn)
+# Job Auto-Apply Bot (Naukri + LinkedIn + Foundit)
 
-Automates job applications on Naukri and LinkedIn Easy Apply using Selenium.
+Automates job applications on Naukri, LinkedIn Easy Apply, and Foundit using Selenium.
 
 ## Setup
 
@@ -25,6 +25,9 @@ NAUKRI_EMAIL=your_email@example.com
 NAUKRI_PASSWORD=your_password
 LINKEDIN_EMAIL=your_email@example.com
 LINKEDIN_PASSWORD=your_password
+FOUNDIT_EMAIL=your_email@example.com
+FOUNDIT_PASSWORD=your_password
+FOUNDIT_JOB_KEYWORDS=AI Architect,GenAI Architect,LLM Architect,LLM Advisor,AI Advisor
 JOB_KEYWORDS=Python Developer
 JOB_LOCATION=Bangalore
 MAX_APPLICATIONS=50
@@ -41,6 +44,12 @@ python main.py --platform naukri
 
 # LinkedIn only
 python main.py --platform linkedin
+
+# Foundit only
+python main.py --platform foundit
+
+# All supported platforms
+python main.py --platform all
 ```
 
 ## Important Notes
@@ -48,6 +57,7 @@ python main.py --platform linkedin
 - **LinkedIn CAPTCHA/2FA**: If detected, the script pauses and asks you to solve it manually in the browser, then press ENTER.
 - **LinkedIn Easy Apply only**: The script only applies to jobs with the "Easy Apply" button. Multi-step forms with required unfilled fields are skipped.
 - **Naukri popups**: The script attempts to handle post-apply chatbot/questionnaire popups automatically.
+- **Foundit role targeting**: Foundit uses its own `FOUNDIT_JOB_KEYWORDS` list and defaults to `AI Architect`, `GenAI Architect`, `LLM Architect`, `LLM Advisor`, and `AI Advisor`.
 - **Chrome required**: Uses Chrome via `webdriver-manager` (auto-downloads matching ChromeDriver).
 - **Rate limits**: Both sites may throttle or block if you apply too fast. The built-in delays help, but you may still get flagged.
 - **Profile must be complete**: Both platforms use your profile data when applying — make sure your resume, skills, and experience are up to date.

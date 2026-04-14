@@ -8,6 +8,16 @@ CONFIG = {
         "email": os.getenv("NAUKRI_EMAIL"),
         "password": os.getenv("NAUKRI_PASSWORD"),
     },
+    "foundit": {
+        "email": os.getenv("FOUNDIT_EMAIL"),
+        "password": os.getenv("FOUNDIT_PASSWORD"),
+        "job_keywords": [
+            k.strip() for k in os.getenv(
+                "FOUNDIT_JOB_KEYWORDS",
+                "AI Architect,GenAI Architect,LLM Architect,LLM Advisor,AI Advisor",
+            ).split(",") if k.strip()
+        ],
+    },
     "linkedin": {
         "email": os.getenv("LINKEDIN_EMAIL"),
         "password": os.getenv("LINKEDIN_PASSWORD"),
